@@ -35,7 +35,7 @@ A standalone PWA digital scorecard for Mt. Paul Golf Course, Kamloops BC. Comple
 
 - Primary green: `#377f09`
 - White logo on green masthead
-- Logo PNG: `assets/mt_paul_logo_transparent.png` (white, transparent bg)
+- Logo: `assets/mt_paul_logo_vector.svg` (true vector, 28 paths, transparent bg) — sole logo asset as of 2026-06-27; raster PNG/AF/old fake-vector SVG deleted by Paul, no longer needed
 - Logo used with placeholder permission for demo — confirm with Dan Latin (owner) before going live
 
 ## Course data — hardcoded in index.html
@@ -63,12 +63,14 @@ Holes 1–9 (same as 10–18):
 
 ## What's built
 
-- Logo PNG extracted (assets/)
+- True vector logo extracted (`assets/mt_paul_logo_vector.svg`)
+- GitHub repo `mt-paul-scorecard` created, GitHub Pages live
+- Placeholder `index.html` ("Hello world") pushed and live
 - PROJECT.md, JOURNAL.md, CLAUDE.md
 
 ## What's NOT built yet
 
-- index.html
+- Real index.html (scorecard UI, replacing placeholder)
 - manifest.json
 - sw.js
 - Install landing page
@@ -77,16 +79,15 @@ Holes 1–9 (same as 10–18):
 
 ## Next session — start here
 
-1. Create GitHub repo `mt-paul-scorecard` (public, separate from `golf-scores`)
-2. Build index.html
+1. Review trimmed `wip/courses.json` (Mt. Paul only, id 6, Blue + Red tees) — once confirmed, move into `assets/courses.json` and commit
+2. Build real index.html (scorecard UI)
 3. Build manifest.json + sw.js
-4. Deploy to GitHub Pages
-5. Test PWA install on phone
-6. Share with Dave
+4. Test PWA install on phone
+5. Share with Dave
 
 ## Key references
 
 - Main Golf app: `~/Documents/Studio/Projects/Golf/` — do NOT modify
-- This project: `~/Documents/Studio/Projects/MtPaulCard/`
-- courses.json reference copy in `assets/` — Mt. Paul is ID 6 (Blue tees)
+- This project: `~/Documents/Studio/Projects/ScoreCard/`
+- Mt. Paul course data: trimmed to `wip/courses.json` from Golf's regional file 2026-06-27 (Mt. Paul is ID 6) — pending review before moving to `assets/`
 - Chronogolf booking: ask Paul for Mt. Paul's public Chronogolf URL next session

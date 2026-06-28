@@ -6,21 +6,27 @@
 
 ## Status
 
-**Version:** v0.1 — Planning + GitHub repo set up. App code (`index.html`/`manifest.json`/`sw.js`) not built yet.
-**Live URL:** TBD — GitHub Pages not yet enabled.
-**GitHub repo:** `https://github.com/kamloopspaul-a11y/mt-paul-scorecard` — created 2026-06-27. Initial commit contains only GitHub's default README; project files not yet pushed (see Known Issues).
+**Version:** v0.1 — GitHub Pages live, placeholder home page up (commit `d349c1a`, 2026-06-27). Real app code (`index.html`/`manifest.json`/`sw.js`) not built yet.
+**Live URL:** https://kamloopspaul-a11y.github.io/mt-paul-scorecard/ — confirmed live (currently showing "Hello world" placeholder).
+**GitHub repo:** `https://github.com/kamloopspaul-a11y/mt-paul-scorecard` — `main` branch has `CLAUDE.md`, `JOURNAL.md`, `PROJECT.md`, `.gitignore`, `index.html` (placeholder), and `assets/`.
 **Local folder:** `~/Documents/Studio/Projects/ScoreCard/`
 
 ---
 
 ## Known Issues
 
-- No `.gitignore` yet.
-- GitHub Pages not enabled.
-- Push auth not wired from the sandbox (remote has no embedded token) — Paul pushes manually via Terminal for now.
-- `CLAUDE.md`, `JOURNAL.md`, `PROJECT.md`, `assets/` are untracked locally — not yet committed or pushed.
+- Git operations on this repo from the Cowork sandbox occasionally hit a stuck `.git/index.lock` (suspected iCloud-sync interference, since this folder lives inside the synced `~/Documents/Studio` tree — timing-based, not yet confirmed). Current approach: Claude pushes directly and tries to self-resolve locks; pushes are batched at checkpoints rather than per-edit to reduce collisions; Paul helps only if Claude gets stuck. See JOURNAL.md Session 3 (2026-06-27) for the full discussion — this is an experiment, not a settled fix.
 
 ---
+
+---
+
+## Repo Hygiene — Working Files
+
+- Draft/working files (alternate UI versions, test scripts, anything mid-iteration during a UX-tweaking session) go in `/wip/` — gitignored, never committed.
+- Nothing gets `git add`ed until Paul has reviewed it locally (in chat, or opened directly from `~/Documents/Studio/Projects/ScoreCard/wip/` in Chrome/Finder) and confirmed it's the version to keep.
+- Once approved, the file is moved/renamed into its real tracked location (e.g. `index.html`) — that's what gets committed, not the draft.
+- Goal: keep the GitHub repo clean — no abandoned experiments, no clutter from the iteration process. (Agreed with Paul 2026-06-27.)
 
 ## Vision
 
@@ -138,10 +144,10 @@ Template reuse: same build deployable to other Kamloops courses (Bighorn, Sun Pe
 | `PROJECT.md` | This file |
 | `JOURNAL.md` | Session notes |
 | `CLAUDE.md` | Claude context for future sessions |
-| `assets/mt_paul_logo_vector.svg` | True vector logo (29 paths), transparent bg — primary asset |
-| `assets/mt_paul_logo_transparent.png` | Original raster source, white logo, transparent bg |
-| `assets/mt_paul_logo_transparent.svg` | Old raster-wrapped export, kept for reference only — not a true vector |
-| `assets/courses.json` | Full Kamloops course seed data (reference) |
-| `index.html` | Main app — NOT YET BUILT |
+| `assets/mt_paul_logo_vector.svg` | True vector logo (28 paths), transparent bg — sole logo asset, others deleted by Paul 2026-06-27 |
+| `index.html` | Placeholder "Hello world" live — real app not yet built |
 | `manifest.json` | PWA manifest — NOT YET BUILT |
 | `sw.js` | Service Worker — NOT YET BUILT |
+| `wip/courses.json` (draft, gitignored) | Mt. Paul-only course data (id 6, Blue + Red tees), trimmed from Golf's regional `courses.json` — awaiting Paul's review before moving into `assets/` |
+
+Note: `assets/mt_paul_logo_transparent.png`, `.af`, and `.svg`, plus `assets/files.zip`, were deleted by Paul via Finder 2026-06-27 (the .png/.af were the raster source/working files for the now-superseded trace; the .svg was confirmed not a true vector). `mt_paul_logo_vector.svg` is the only remaining — and only needed — logo asset.
