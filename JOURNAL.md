@@ -228,3 +228,45 @@ Paul confirmed turning off Optimize Mac Storage would not affect iPhone Contacts
 Revised theory (unconfirmed): Optimize Mac Storage governs *eviction* of old/unused files, but newly-written files inside a Desktop & Documents Folders-synced directory may still go through an iCloud upload queue immediately after creation, and the File Provider extension may hold the inode during that upload window regardless of the Optimize setting. This would explain why a lock file that's created and deleted within milliseconds (git's normal pattern) keeps colliding even with Optimize off — it's not about local storage management, it's about the upload-in-flight window. Not yet verified; needs more data points (e.g., does the problem fade once the 21.9GB backlog finishes materializing, or does it persist indefinitely on every new file write).
 
 **Status at session pause:** All five changes still staged locally, uncommitted, not pushed. Paul stepped away for an errand (~40 min) and asked for a resume prompt to continue in a fresh session rather than this long one. Picking up: clear lock (Paul, Terminal), retry `git commit` + `git push`, see if it goes through clean or needs more manual clears. Do NOT update `Studio/CLAUDE.md`'s GitHub section or the `github_push_no_terminal.md` memory file claiming the EPERM bug is fixed — it is not confirmed fixed yet, only diagnosed with a fix attempted and not yet validated.
+
+---
+
+## Session 4 — 2026-06-27 — Visual style exploration (palettes, illustration, landing page concept)
+
+### What we did
+
+Pure style/branding exploration. Nothing touched the real app — `index.html`/`manifest.json`/`sw.js` are still untouched, still placeholder. Everything below lives in `wip/style-refs/`, gitignored, not committed.
+
+**Colour palette extraction**
+- Paul uploaded two reference images for colour-wheel palette work. Both a parallel agent check and direct pixel extraction flagged that the files didn't match their filenames/descriptions — real, readable images, just not the golf-sketch/watercolour content Paul described. Asked Paul how to proceed; he chose to use the two images as-is.
+- Renamed for accuracy: `hole-yardage-sketch-ref.jpg` → `tuscan-hillside-ref.jpg`; `landscape-rendering-palette-ref.jpg` → `building-maple-landscape-ref.jpg`.
+- Extracted real pixel colours and synthesized 4 traditional colour-wheel palettes (5 chips each): Analogous "Hillside Haze" (`#EDECE6` `#C5C2B3` `#A8A888` `#757D57` `#434E34`), Complementary "Sky & Clay", Triadic "Hillside & Structure", Monochromatic "Ink Wash".
+- Saved swatch sheet: `wip/style-refs/2026-06-27-ScoreCard-ColourWheelPalettes.png`.
+- **Paul's feedback:** liked the result but felt it was too muted — "I thought you would use more colours." Root cause: both source photos are genuinely desaturated, so the extracted palettes inherited that.
+- **Open item, not yet actioned:** two more candidate files surfaced mid-session in `wip/` — `Hole-Layout-Sketch.webp` and `Colour-Palette-Sample-03.jpeg` — strong candidates for the actual golf-sketch/watercolour references Paul originally meant. Flagged to Paul; he moved on to the landing-page request instead of responding. Paul separately saved his own copy as `wip/ScoreCard-Colour-Palettes.png.pdf`.
+
+**Steadman-style golfer illustration**
+- Paul uploaded a golfer mid-swing photo and asked for a monochromatic pen-and-ink treatment with original Ralph Steadman-style ink splatter (technique homage, not traced/copied artwork).
+- Pipeline: grayscale → bilateral filter → adaptive threshold + Canny linework → luminance-banded crosshatch shading → composite onto a single ink/paper tone. Fixed one bug (a JPEG-banding artifact being misread as shading) before finalizing. Added original procedural ink splatter (impact cluster at the clubhead, tension cluster at the grip, sparse flicks along the shaft, two rogue blots in open background).
+- Saved: `wip/style-refs/2026-06-27-ScoreCard-SteadmanGolferIllustration.png`. Reviewed at full size and via cropped close-ups — no further iteration requested.
+
+**Landing page concept (Hillside Haze palette)**
+- Built `wip/style-refs/2026-06-27-ScoreCard-LandingPage.html` — single-file HTML/CSS style concept, explicitly not the production app (line 2 says so).
+- Iterated live with Paul through several rounds:
+  1. v1 — small dark badge top-right for the logo (the SVG's white fill needs a dark backing to read), Steadman illustration as a faint bottom-right watermark, all 5 Hillside Haze chips assigned distinct roles.
+  2. v2 — tried a full-height 30% sidebar column for the logo + watermark, with a phone breakpoint collapsing it into a horizontal bar. Paul's call: dropped in favour of something simpler ("Let's just go with the top bar").
+  3. v3 (final, current) — single horizontal masthead bar across the top (ink background, 4px beige bottom border), logo top-left. Headline changed to **"FORE!"**; intro copy rewritten and split into two paragraphs after the first sentence; a short "partial" rule line under the headline that was bothering Paul was removed entirely rather than widened. Watermark removed entirely per Paul's final instruction.
+  4. Sizing/spacing fine-tuning: logo scaled to 140% of its prior size (flagged this reading to Paul since the literal "increase 140%" would have overflowed the masthead bar — he didn't object); watermark opacity cut 20% before it was removed altogether; logo indent walked 8% → 6% (briefly dragged the text body's indent along by mistake — Paul caught it: "It will never line up if we move them both at the same time" — reverted body to 8%, kept logo alone at 6%) → 1% (literal test, prompted Paul's "I keep forgetting how literally you take prompts") → restored to 6% + 1% more, landing on **7%** for the logo, independent of the text body/footer which stayed at 8%.
+- Deferred, not built: on larger screens the masthead could later carry news/announcements; on phones, either a bottom icon nav (matching the Golf app's pattern) or a top-right hamburger menu.
+
+### Lesson learned
+When an instruction changes a value that has to visually align with another fixed value (e.g. "shift the logo a bit" when the body text indent is meant to stay put), don't move both together by default — confirm which one is meant to move, or change only the one explicitly named and hold everything else fixed. Paul's adjacent literalism note ("I keep forgetting how literally you take prompts") is a useful read in the other direction: small relative instructions ("nudge 1%") can be read as new absolute values unless context makes the relative intent obvious — when ambiguous, flag the interpretation rather than silently picking one.
+
+### Paul's closing note
+"I like what I see... some might call it plain... this is a good start." Session paused here at his request — no further build asked for. Nothing from this session has been committed; all of it sits in `wip/style-refs/` pending review, per the existing hygiene convention.
+
+### Next session — pick up here
+1. If Paul wants brighter palettes, re-extract from `wip/Hole-Layout-Sketch.webp` and `wip/Colour-Palette-Sample-03.jpeg` (still unreviewed) instead of the two source photos used this session.
+2. The landing-page concept is parked at a Paul-approved-feeling but informally paused state — confirm whether to keep iterating it, promote any part of it toward the real `index.html`, or treat it as a closed style reference only.
+3. Real PWA build (`index.html` replacement, `manifest.json`, `sw.js`) still not started — carried over from every prior session.
+4. Git: nothing new to push from this session (wip/-only work). Session 3's unresolved EPERM/staged-commit thread (`.gitignore`, doc updates, asset deletions — all still staged, uncommitted) is a separate, still-open thread — see Session 3 (continued) above, not touched this session.

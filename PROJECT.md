@@ -7,6 +7,7 @@
 ## Status
 
 **Version:** v0.1 — GitHub Pages live, placeholder home page up (commit `d349c1a`, 2026-06-27). Real app code (`index.html`/`manifest.json`/`sw.js`) not built yet.
+**Style exploration (parallel track, 2026-06-27):** In progress in `wip/style-refs/` — colour-wheel palettes, a Steadman-style ink illustration, and a landing-page concept using the "Hillside Haze" palette. Exploratory only; not committed, doesn't change the version number, doesn't replace the Design spec below unless Paul says so. See JOURNAL.md Session 4.
 **Live URL:** https://kamloopspaul-a11y.github.io/mt-paul-scorecard/ — confirmed live (currently showing "Hello world" placeholder).
 **GitHub repo:** `https://github.com/kamloopspaul-a11y/mt-paul-scorecard` — `main` branch has `CLAUDE.md`, `JOURNAL.md`, `PROJECT.md`, `.gitignore`, `index.html` (placeholder), and `assets/`.
 **Local folder:** `~/Documents/Studio/Projects/ScoreCard/`
@@ -106,6 +107,8 @@ Par 32 front, Par 32 back, Par 64 total.
 - Fixed layouts, no shifting elements (Paul's standard rule)
 - No browser chrome when installed as PWA
 
+**Style exploration note (2026-06-27):** A separate, exploratory colour direction — "Hillside Haze" (cream/khaki/olive analogous palette) — is being tried in a landing-page concept (`wip/style-refs/2026-06-27-ScoreCard-LandingPage.html`). This has NOT replaced the Spring Green spec above; nothing here is locked until Paul says so.
+
 ---
 
 ## Tee Time Integration
@@ -149,5 +152,8 @@ Template reuse: same build deployable to other Kamloops courses (Bighorn, Sun Pe
 | `manifest.json` | PWA manifest — NOT YET BUILT |
 | `sw.js` | Service Worker — NOT YET BUILT |
 | `wip/courses.json` (draft, gitignored) | Mt. Paul-only course data (id 6, Blue + Red tees), trimmed from Golf's regional `courses.json` — awaiting Paul's review before moving into `assets/` |
+| `wip/style-refs/2026-06-27-ScoreCard-ColourWheelPalettes.png` (draft, gitignored) | 4 colour-wheel palettes extracted from reference photos — too muted per Paul, may be redone from `wip/Hole-Layout-Sketch.webp` / `wip/Colour-Palette-Sample-03.jpeg` |
+| `wip/style-refs/2026-06-27-ScoreCard-SteadmanGolferIllustration.png` (draft, gitignored) | Monochromatic ink illustration of a golfer + original Steadman-style splatter, used as a design reference |
+| `wip/style-refs/2026-06-27-ScoreCard-LandingPage.html` (draft, gitignored) | Landing-page style concept using the "Hillside Haze" palette — concept only, not the production `index.html` |
 
 Note: `assets/mt_paul_logo_transparent.png`, `.af`, and `.svg`, plus `assets/files.zip`, were deleted by Paul via Finder 2026-06-27 (the .png/.af were the raster source/working files for the now-superseded trace; the .svg was confirmed not a true vector). `mt_paul_logo_vector.svg` is the only remaining — and only needed — logo asset.
