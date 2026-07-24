@@ -1,0 +1,22 @@
+{
+  "_meta": {
+    "_comment": "Mt. Paul Course Rating & Slope Rating by tee/gender, for handicap differential calculations only. Kept separate from mt-paul-course-data.json (holes/yardages) because ratings are re-issued seasonally — expect an update later this season or next.",
+    "_updated": "2026-07-22"
+  },
+  "club_name": "Mt. Paul",
+  "stroke_index": {
+    "_comment": "Same handicap/SI values for men and ladies; identical front/back 9, alternating odd/even.",
+    "out": { "H1": 5, "H2": 13, "H3": 11, "H4": 3, "H5": 17, "H6": 1, "H7": 15, "H8": 7, "H9": 9 },
+    "in": { "H10": 6, "H11": 14, "H12": 12, "H13": 4, "H14": 18, "H15": 2, "H16": 16, "H17": 8, "H18": 10 }
+  },
+  "ratings": {
+    "male": {
+      "Blue": { "course_rating": 59.0, "slope_rating": 86 },
+      "Red": { "course_rating": 57.9, "slope_rating": 72 }
+    },
+    "female": {
+      "Blue": { "course_rating": 62.2, "slope_rating": 95 },
+      "Red": { "course_rating": 58.6, "slope_rating": 88 }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "A Bit of Bogey",
+  "short_name": "Bogey",
+  "description": "A single-player golf scorecard PWA for Mt. Paul Golf Course.",
+  "start_url": ".",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#5C1620",
+  "theme_color": "#8C2E39",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icons/favicon-32.png", "sizes": "32x32", "type": "image/png" },
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}

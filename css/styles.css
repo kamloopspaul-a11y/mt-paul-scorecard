@@ -1,0 +1,793 @@
+/* A Bit of Bogey — shared app styles
+   Palette (per manifest.json / icons):
+   - CTA gradient: #8C2E39 -> #5C1620
+   - Background (light mode): #F4EFE3
+   - Ink: #1C1C1C
+*/
+
+:root {
+  --cta-start: #8C2E39;
+  --cta-end: #5C1620;
+  --bg: #F4EFE3;
+  --ink: #1C1C1C;
+  --ink-muted: #6b6459;
+  --line: #d8d0bf;
+  --card-bg: #ffffff;
+  --danger: #8C2E39;
+  --blue-tee: #2F6DB5;
+  --red-tee: #C0392B;
+  --toast-bg: #1C1C1C;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Pass 4 — two display fonts named in the reference design tokens
+     (--font-marquee / --font-ui in Design Handoff/A Bit of Bogey.dc.html):
+     marquee = big poster-style screen titles + the score digit itself;
+     ui = spaced-out uppercase labels (buttons, toggles, rockers, headings). */
+  --font-marquee: 'Bebas Neue', Impact, "Arial Narrow Bold", var(--font);
+  --font-ui: 'Hanken Grotesk', var(--font);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+}
+
+#app {
+  width: 100%;
+  max-width: 480px;
+  min-height: 100vh;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 20px 24px 24px;
+  /* Pass 5 bug fix: index.html's viewport meta already sets
+     viewport-fit=cover (so the app can draw under the iOS notch/home
+     indicator), but nothing here actually consumed env(safe-area-inset-*) —
+     on a notched/home-indicator phone the bottom-pinned Save/Next/Play
+     buttons (and Home's Reports/Settings links) could sit flush against, or
+     be partially covered by, the home-indicator gesture area. max() keeps
+     the existing 24px on non-notched devices and grows only where a real
+     inset is reported. */
+  padding-top: max(20px, env(safe-area-inset-top));
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+}
+
+.hidden { display: none !important; }
+
+h1, h2, h3 {
+  font-weight: 400;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin: 0;
+}
+/* Big poster-style screen titles ("Settings", "Hole 1 · Par 4", "Final
+   Score", "Analytics") — reference uses Bebas Neue, weight 400. */
+h1 {
+  font-family: var(--font-marquee);
+  letter-spacing: 0.6px;
+}
+/* Section headings inside cards ("Season Stats", "Birdies Each Week") use
+   the same spaced-out grotesk as the other UI labels, not the poster font. */
+h2, h3 {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+/* --- Top bar --- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+/* Mt. Paul Golf Course wordmark (Design-Screens/02-setup.png etc. show the
+   real club logo graphic in the topbar, not plain text) — see assets/Logos. */
+.brand-logo {
+  height: 34px;
+  width: auto;
+  display: block;
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 6px;
+}
+
+/* --- Buttons --- */
+.btn {
+  display: block;
+  width: 100%;
+  padding: 16px 20px;
+  border: none;
+  border-radius: 14px;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  cursor: pointer;
+  color: #fff;
+  background: linear-gradient(160deg, var(--cta-start), var(--cta-end));
+  box-shadow: 0 4px 10px rgba(0,0,0,.25);
+}
+
+.btn:active { transform: translateY(1px); }
+
+.btn.secondary {
+  background: #fff;
+  color: var(--cta-end);
+  border: 2px solid var(--cta-end);
+  box-shadow: none;
+}
+
+.btn.ghost {
+  background: transparent;
+  color: var(--ink-muted);
+  box-shadow: none;
+  text-decoration: underline;
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 10px;
+}
+
+.btn.small {
+  padding: 10px 14px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+
+.btn-row {
+  display: flex;
+  gap: 12px;
+}
+.btn-row .btn { flex: 1; }
+
+/* --- Onboarding --- */
+.onboarding-screen {
+  padding: 0;
+  justify-content: flex-end;
+  background: #0b0b0b;
+  color: #fff;
+  min-height: 100vh;
+}
+.onboarding-title-block {
+  padding: 0 24px 28px;
+  text-align: center;
+}
+.onboarding-title-block h1 {
+  font-size: 64px;
+  line-height: 1;
+  color: #fff;
+  margin: 2px 0 6px;
+}
+.onboarding-title-block .subtitle {
+  font-family: var(--font-marquee);
+  font-size: 26px;
+  color: #e8e8e8;
+  margin-bottom: 4px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+/* Faux movie-poster credits block (Design-Screens/01-onboarding.png shows a
+   3-column "Starring.../An...Film/...Director" credit line above Start). */
+.onboarding-credits {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  margin: 10px 0 20px;
+  font-family: var(--font-marquee);
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,.7);
+}
+.onboarding-credits div { flex: 1; }
+.onboarding-cta { padding: 0 24px max(32px, calc(env(safe-area-inset-bottom) + 12px)); }
+
+/* --- Cards / forms --- */
+.card {
+  background: var(--card-bg);
+  border-radius: 16px;
+  padding: 18px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+}
+
+.field { margin-bottom: 18px; }
+.field label {
+  display: block;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+.field input[type="text"], .field input[type="number"] {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  font-size: 16px;
+  font-family: var(--font);
+  background: #fff;
+}
+
+.row-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.row-toggle:last-child { border-bottom: none; }
+.toggle-label {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+}
+.toggle-label.dim { color: var(--ink-muted); }
+
+.switch {
+  position: relative;
+  width: 62px;
+  height: 30px;
+  border-radius: 15px;
+  background: linear-gradient(160deg,#8C2E39,#5C1620);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.switch .knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #C0392B;
+  transition: left .15s ease;
+  box-shadow: 0 2px 4px rgba(0,0,0,.4);
+}
+.switch.state-b .knob { left: 35px; background: var(--blue-tee); }
+.switch.tee.state-a .knob { background: var(--blue-tee); left: 3px; }
+.switch.tee.state-b .knob { background: var(--red-tee); left: 35px; }
+
+/* --- Home --- */
+.home-hero {
+  text-align: center;
+  margin: 24px 0;
+}
+.home-hero h1 { font-size: 30px; }
+.home-hero .player-name { color: var(--ink-muted); text-transform: none; font-weight: 600; margin-top: 4px; }
+
+.pending-card {
+  background: #fff;
+  border: 2px solid var(--cta-start);
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 18px;
+}
+.pending-card .pending-title {
+  font-weight: 800;
+  text-transform: uppercase;
+  font-size: 13px;
+  color: var(--cta-end);
+  margin-bottom: 4px;
+}
+.pending-card p { margin: 4px 0 12px; font-size: 14px; color: var(--ink-muted); }
+
+.home-links {
+  margin-top: auto;
+  display: flex;
+  justify-content: space-around;
+  padding-top: 20px;
+}
+.home-links a {
+  color: var(--ink-muted);
+  text-decoration: none;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+
+/* --- Hole screen --- */
+.hole-header { margin-bottom: 6px; }
+.hole-header h1 { font-size: 30px; }
+.hole-yardages {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-weight: 700;
+  font-size: 16px;
+}
+.hole-yardages .yard { display: flex; align-items: center; gap: 6px; }
+.hole-yardages .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.hole-yardages .dot.blue { background: var(--blue-tee); }
+.hole-yardages .dot.red { background: var(--red-tee); }
+
+.hole-top-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.score-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  margin: 10px 0 28px;
+}
+.score-btn {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(160deg, var(--cta-start), var(--cta-end));
+  color: #fff;
+  font-size: 30px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0,0,0,.3);
+}
+.score-value {
+  font-family: var(--font-marquee);
+  font-size: 68px;
+  font-weight: 400;
+  min-width: 70px;
+  text-align: center;
+}
+
+.rockers-row {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 18px;
+  margin-bottom: 24px;
+}
+/* Bug fix (Pass 5): FIR now renders on every hole including par-3s (Fix 1),
+   so the rockers row is always FIR+GIR+PEN+UD (4 pills) plus the Putts
+   control, not sometimes-3-sometimes-4 as before. At 18px gaps and 46px
+   pills that's ~306px of required width, which clears typical 375px+ phones
+   but can overflow the narrowest supported screens (~320px logical width)
+   since this row has no wrap/scroll and .screen doesn't clip overflow-x —
+   tighten the gap and pill size a bit below 360px so nothing pushes past
+   the viewport edge. */
+@media (max-width: 360px) {
+  .rockers-row { gap: 10px; }
+  .rocker-pill { width: 40px; }
+}
+.rocker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.rocker-pill {
+  width: 46px;
+  height: 78px;
+  border-radius: 23px;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  background: linear-gradient(160deg,#8C2E39,#5C1620);
+  box-shadow: none;
+}
+.rocker-pill .dot {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #C0392B;
+  top: 48px; /* off (default/not-achieved) = dot low in the pill — see
+                Design-Screens/03-hole1.png etc. and the reference impl's
+                TOGGLE_KNOB_OFF_POS; was inverted vs. mockup before Pass 4 */
+  transition: top .15s ease, background .15s ease;
+}
+.rocker-pill.on { background: linear-gradient(160deg,#E0455A,#8C2E39); box-shadow: 0 3px 8px rgba(0,0,0,.5); }
+.rocker-pill.on .dot { top: 6px; } /* on/achieved = dot rises to the top */
+.rocker-label {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 14px;
+  letter-spacing: 0.05em;
+}
+.putts-control {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.putts-control button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 10px;
+}
+.putts-value {
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  min-width: 40px;
+  text-align: center;
+  font-weight: 800;
+  font-size: 18px;
+  padding: 4px 0;
+}
+
+.hole-photo {
+  flex: 1;
+  min-height: 160px;
+  border-radius: 16px;
+  background: #111 center/cover no-repeat;
+  margin-bottom: 20px;
+}
+
+.quit-link {
+  text-align: center;
+  margin-top: 10px;
+}
+.quit-link button {
+  background: none;
+  border: none;
+  color: var(--ink-muted);
+  text-decoration: underline;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* --- Scorecard / Final Score --- */
+.scorecard {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 18px;
+  font-size: 14px;
+}
+.scorecard th, .scorecard td {
+  text-align: center;
+  padding: 8px 2px;
+}
+.scorecard thead tr.holes-row th {
+  background: var(--cta-end);
+  color: #fff;
+  font-weight: 800;
+}
+.scorecard tr.par-row td {
+  background: #e6e0d2;
+  font-weight: 700;
+}
+.scorecard tr.score-row-data td {
+  font-weight: 800;
+  font-size: 16px;
+}
+.scorecard td.total, .scorecard th.total {
+  background: var(--cta-start);
+  color: #fff;
+}
+.scorecard tr.par-row td.total { background: #cfc7b3; }
+.scorecard tr.score-row-data td.total { background: var(--cta-end); color: #fff; }
+
+.final-score-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 18px;
+}
+.final-score-header .total-score {
+  font-family: var(--font-marquee);
+  font-size: 48px;
+  font-weight: 400;
+}
+
+.empty-state {
+  text-align: center;
+  color: var(--ink-muted);
+  padding: 40px 20px;
+  font-size: 15px;
+}
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(28px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  background: var(--toast-bg);
+  color: #fff;
+  padding: 12px 22px;
+  border-radius: 30px;
+  font-weight: 700;
+  font-size: 14px;
+  box-shadow: 0 6px 16px rgba(0,0,0,.35);
+  z-index: 999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .2s ease;
+}
+.toast.visible { opacity: 1; }
+
+.center-note {
+  text-align: center;
+  color: var(--ink-muted);
+  font-size: 14px;
+  margin-top: 12px;
+}
+
+/* --- Reports / Analytics (Pass 2) --- */
+.reports-screen { padding-bottom: 32px; }
+
+.report-date {
+  color: var(--ink-muted);
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 18px;
+}
+
+/* Design-Screens/06-analytics.png shows a flat, continuous page — section
+   headings and charts sit directly on the page background with a hairline
+   rule between groups, not individually boxed/shadowed cards (Pass 2 had
+   used bordered white cards here; Pass 4 matches the mockup instead). */
+.report-section {
+  padding: 0 0 18px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.report-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.report-heading {
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  margin: 0 0 12px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--ink);
+}
+
+.report-sub {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink-muted);
+}
+
+.section-empty {
+  color: var(--ink-muted);
+  font-size: 14px;
+  margin: 0;
+  text-align: center;
+  padding: 10px 0;
+}
+
+/* Season Stats hero tiles */
+.stat-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.stat-tile {
+  /* Now that .report-section is flat (no white card behind it), tiles need
+     their own background to read as a grouped unit against the page bg. */
+  background: var(--card-bg);
+  border-radius: 12px;
+  padding: 12px 8px;
+  text-align: center;
+}
+.stat-tile-value {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--cta-end);
+  font-family: var(--font);
+}
+.stat-tile-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--ink-muted);
+  margin-top: 2px;
+}
+
+/* Generic bar charts (Score Distribution, Best 8, Hole Ratings, Weekly) */
+.bar-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  gap: 6px;
+  min-height: 120px;
+  padding-top: 8px;
+}
+.bar-row.scroll {
+  justify-content: flex-start;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+.bar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 30px;
+  flex: 1 0 auto;
+}
+.bar-row.scroll .bar-col { flex: 0 0 auto; width: 32px; }
+.bar {
+  width: 22px;
+  border-radius: 6px 6px 2px 2px;
+  background: linear-gradient(160deg, var(--cta-start), var(--cta-end));
+  align-self: flex-end;
+}
+.bar.bar-good {
+  background: linear-gradient(160deg, #3f7d4f, #2c5a38);
+}
+.bar.bar-empty {
+  background: var(--line);
+}
+/* Weekly Reveal grow-in (Design-Screens/18-22): the newest bar animates in
+   the first time its week's data appears; see resolveNewWeekSlotIndex() in
+   js/stats.js. Purely cosmetic — replays never touch score/analytics data. */
+.bar.bar-new {
+  animation: bar-grow-in .5s ease-out;
+  transform-origin: bottom;
+}
+@keyframes bar-grow-in {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+.bar-value {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.bar-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-transform: none;
+}
+
+/* Handicap Index readout */
+.handicap-readout {
+  font-family: var(--font-marquee);
+  font-size: 44px;
+  font-weight: 400;
+  color: var(--cta-end);
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+/* Simple stat tables (20 Round Average, Scrambling/Putting, Today's Stats, ROI) */
+.stat-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.stat-table tr td {
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.stat-table tr:last-child td { border-bottom: none; }
+.stat-table tr td:first-child {
+  font-weight: 700;
+  color: var(--ink-muted);
+}
+.stat-table tr td:last-child {
+  text-align: right;
+  font-weight: 800;
+}
+
+/* --- Setup / Settings screen additions (Pass 3) --- */
+
+/* Dark/Light mode toggle — always a red/maroon knob in both positions (per
+   Design Handoff/Design-Screens/02-setup.png), unlike the Blue/Red tee switch
+   which recolors the knob per side. */
+.switch.mode .knob { background: #C0392B; }
+.switch.mode.state-a .knob { left: 3px; background: #C0392B; }
+.switch.mode.state-b .knob { left: 35px; background: #C0392B; }
+
+.weather-readout {
+  text-align: center;
+  color: var(--ink-muted);
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 16px;
+  margin-bottom: 14px;
+}
+
+.field-help {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ink-muted);
+  margin: 6px 0 0;
+}
+
+.export-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 14px;
+  margin-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.export-row-text { flex: 1; }
+.export-row .toggle-label { display: block; margin-bottom: 2px; }
+
+.icon-square-btn {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1.5px solid var(--ink-muted);
+  background: transparent;
+  color: var(--ink-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.icon-square-btn:active { transform: translateY(1px); }
+
+/* --- Dark mode (Pass 3) ---
+   No dark-mode mockup exists for this build; keeps the maroon CTA gradient
+   and accent colors identical to Light Mode, only flips background/text.
+   Toggled via `body.dark-mode`, set from settings.lightMode in js/app.js
+   (see applyDarkModeClass()) — applied on every boot and immediately on
+   toggle tap, not deferred until Save. */
+body.dark-mode {
+  --bg: #16140F;
+  --ink: #F4EFE3;
+  --ink-muted: #ADA495;
+  --line: #3A362C;
+  --card-bg: #221F19;
+  --toast-bg: #3A362C;
+}

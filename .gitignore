@@ -1,3 +1,11 @@
 .DS_Store
 assets/files.zip
 /wip/
+
+# Scratch/reference material not needed by the shipped app (design handoff
+# package, raw source screenshots, Affinity Photo originals) — kept locally
+# for reference, never committed. See PROJECT.md's Files table.
+/Design Handoff/
+/Film Theme Score Tracker.zip
+assets/Originals/
+assets/Image-Template.af

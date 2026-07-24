@@ -1,12 +1,33 @@
 <!DOCTYPE html>
-<!-- See PROJECT.md for full changelog and version history -->
+<!-- A Bit of Bogey — single-player golf scorecard PWA for Mt. Paul Golf Course.
+     See Design Handoff/README.md for the full data-wiring spec, and
+     PROJECT.md / JOURNAL.md for changelog and version history. -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mt. Paul Scorecard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>A Bit of Bogey</title>
+<meta name="description" content="A single-player golf scorecard PWA for Mt. Paul Golf Course.">
+<meta name="theme-color" content="#8C2E39">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<!-- Display fonts (Pass 4 — visual fidelity). The reference design tokens
+     (Design Handoff/A Bit of Bogey.dc.html, --font-marquee / --font-ui) call
+     for two webfonts Passes 1-3 never loaded, falling back to the system
+     stack instead: Bebas Neue for big poster-style titles/score numerals
+     ("BOGEY", "SETTINGS", "HOLE 1 · PAR 4", the score digit itself), and
+     Hanken Grotesk for the spaced-out uppercase UI labels (buttons, toggle
+     labels, rocker labels, section headings). font-display:swap so neither
+     ever blocks rendering; offline-with-no-prior-cache just falls back to
+     the system font stack (sw.js only precaches same-origin requests). -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Hanken+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-<h1>Hello world</h1>
+<div id="app"><div class="screen"><p>Loading…</p></div></div>
+<script type="module" src="js/app.js"></script>
 </body>
 </html>

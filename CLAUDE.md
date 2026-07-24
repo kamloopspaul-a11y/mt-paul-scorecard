@@ -1,93 +1,64 @@
-# CLAUDE.md — Mt. Paul Card
+# CLAUDE.md — A Bit of Bogey
 
-*Context file for Claude. Upload this along with PROJECT.md and JOURNAL.md at the start of each session.*
+*Context file for Claude. Read this along with PROJECT.md and JOURNAL.md at the start of each session on this project.*
 
 ---
 
 ## What this project is
 
-A standalone PWA digital scorecard for Mt. Paul Golf Course, Kamloops BC. Completely separate from Paul's main Golf Scores app (`golf-scores` repo). Shareable via link — no account required, no backend, no Apps Script.
+A standalone PWA golf scorecard + stats app for Mt. Paul Golf Course, Kamloops BC. Completely separate from Paul's main Golf Scores app (`golf-scores` repo) — do not modify that project from here. Private-Distribution track only (localStorage, no backend) — see PROJECT.md's "Distribution Model" for the Market track that isn't built yet.
+
+Renamed and rebuilt from scratch 2026-07-23 under the name **"A Bit of Bogey."** The old "Mt. Paul Card"/"ScoreCard" concept (Spring Green branding) is superseded — ignore any lingering reference to it elsewhere in this repo's older history.
 
 ## Who it's for
 
 - Dave (Paul's golf friend at Mt. Paul) — first real-world user
-- Other Mt. Paul golfers — shared via text or QR code at the clubhouse
-- Eventually: pitch to Mt. Paul clubhouse as a branded companion app
+- Other Mt. Paul golfers — shared via text or QR code
+- (Market track, later, separately) Mt. Paul clubhouse as a branded companion app
 
-## Paul's design rules (always apply)
+## Tech stack (as built, 2026-07-23)
 
-- Fixed layouts — no shifting elements between screens
-- Compact mastheads — logo at ~55px height, no wasted real estate
-- Consistent font sizes across equivalent elements
-- No leaderboard, no multi-player
-- Visual stability is a meaningful UX concern
+- **Multi-file**, not single-file: `index.html` + `css/styles.css` + `js/*.js` (ES modules, `type="module"`).
+- **Must be served over http(s)** to work (ES modules + `fetch()` fail under `file://`) — use `python3 -m http.server` (or equivalent) for local testing, not double-clicking `index.html`.
+- No framework, no build step, no bundler.
+- `manifest.json` + `sw.js` for PWA/offline (cache-first, versioned — bump `CACHE_NAME` in `sw.js` whenever a precached file's content changes).
+- `localStorage` only — keys: `mtpaul-settings`, `currentRound`, `pending-nine-holes`, `rounds-history`, `weekly-anim-week-seen`. No backend, no API calls except the read-only Open-Meteo weather fetch.
+- GitHub Pages hosting at a repo subpath — `manifest.json`'s `start_url`/`scope` are relative (`.`/`./`) to work correctly there.
 
-## Tech stack
+## Data-layer modules — treat as stable, don't rewrite
 
-- Pure HTML/JS — single `index.html` file
-- No framework, no build tools
-- `manifest.json` + `sw.js` for PWA
-- GitHub Pages hosting
-- `localStorage` for score persistence
-- No backend, no API calls, no Apps Script
+`js/round-record.js`, `js/settings-record.js`, `js/stats-defaults.js` came verbatim from the original design handoff (`Design Handoff/` folder) and are considered correct as-is. If a bug seems to originate there, it almost certainly doesn't — look at how `js/app.js`/`js/stats.js` call them first.
 
 ## Colour / branding
 
-- Primary green: `#377f09`
-- White logo on green masthead
-- Logo: `assets/mt_paul_logo_vector.svg` (true vector, 28 paths, transparent bg) — sole logo asset as of 2026-06-27; raster PNG/AF/old fake-vector SVG deleted by Paul, no longer needed
-- Logo used with placeholder permission for demo — confirm with Dan Latin (owner) before going live
+- CTA gradient: `#8C2E39` → `#5C1620` (maroon), used identically in light and dark mode
+- Light mode background: `#F4EFE3`; dark mode is a dark near-black/charcoal background with off-white text (no source mockup for dark mode — a judgment call, revisit if Paul wants a specific palette)
+- Fonts: Bebas Neue (titles/score numerals), Hanken Grotesk (UI labels) — loaded from Google Fonts, falls back to system fonts if offline on a first-ever (never-cached) launch
+- Logo: `assets/Logos/mt_paul_logo_vector.svg`
 
-## Course data — hardcoded in index.html
+## Course data — NOT hardcoded, fetched at runtime
 
-Mt. Paul Golf Course, Blue tees, 9 holes looped twice as 18. Par 64, 3,974 yards.
+`mt-paul-course-data.json` (par/yardage/stroke-index, Blue + Red tees, project root) and `mt-paul-handicap-ratings.json` (Course Rating/Slope, kept separate since ratings are reissued seasonally) — both fetched via `js/course-data.js` / `js/stats.js`. Don't hardcode hole data into JS — update the JSON files instead.
 
-Holes 1–9 (same as 10–18):
-1: Par 4, 275 yds
-2: Par 3, 137 yds
-3: Par 3, 179 yds
-4: Par 4, 300 yds
-5: Par 3, 95 yds  ← NOTE: new tee box coming, yardage TBD
-6: Par 4, 345 yds
-7: Par 3, 135 yds
-8: Par 4, 251 yds
-9: Par 4, 270 yds
+## Golf stat definitions (get these right)
 
-## Scoring legend
+- **GIR**: ball reaches the green in (par − 2) strokes or fewer.
+- **Putts**: only strokes taken with the ball already on the green. A putter stroke from off the green is a stroke (can still count toward GIR) but must NOT increment putts.
+- **FIR**: shown and counted on every hole, including par-3s (owner decision, 2026-07-23 — overrides the more conventional "no fairway on a par-3" read that an earlier draft used).
 
-- Birdie (−1): circle around score
-- Par: plain
-- Bogey (+1): square box around score
-- Double bogey+ (≥+2): blush pink cell background
-- Eagle or better: double circle (optional — Mt. Paul is all par 3s and 4s, eagle rare)
+## What's built (2026-07-23, v1.0)
 
-## What's built
-
-- True vector logo extracted (`assets/mt_paul_logo_vector.svg`)
-- GitHub repo `mt-paul-scorecard` created, GitHub Pages live
-- Placeholder `index.html` ("Hello world") pushed and live
-- PROJECT.md, JOURNAL.md, CLAUDE.md
-
-## What's NOT built yet
-
-- Real index.html (scorecard UI, replacing placeholder)
-- manifest.json
-- sw.js
-- Install landing page
-- QR code poster
-- PWA icons
+See PROJECT.md's "What's built" section for the full list — round capture, Analytics/Reports, Settings (incl. weather + membership ROI inputs), PWA/offline. Not yet: on-device testing, git commit/push, CSV export/import.
 
 ## Next session — start here
 
-1. Review trimmed `wip/courses.json` (Mt. Paul only, id 6, Blue + Red tees) — once confirmed, move into `assets/courses.json` and commit
-2. Build real index.html (scorecard UI)
-3. Build manifest.json + sw.js
-4. Test PWA install on phone
-5. Share with Dave
+1. Real-browser/on-device check (dark mode, webfonts, offline behaviour).
+2. Resolve the post-onboarding landing-screen decision (Home vs Settings) — see PROJECT.md.
+3. Commit, push, redeploy GitHub Pages.
+4. Share with Dave.
 
 ## Key references
 
-- Main Golf app: `~/Documents/Studio/Projects/Golf/` — do NOT modify
+- Main Golf app: `~/Documents/Studio/Projects/Golf/` — do NOT modify (its `fetchWeather()` pattern was ported here, that's the only cross-reference)
 - This project: `~/Documents/Studio/Projects/ScoreCard/`
-- Mt. Paul course data: trimmed to `wip/courses.json` from Golf's regional file 2026-06-27 (Mt. Paul is ID 6) — pending review before moving to `assets/`
-- Chronogolf booking: ask Paul for Mt. Paul's public Chronogolf URL next session
+- Original design handoff (spec + mockups + reference implementation this build came from): `Design Handoff/` in this project's own folder
