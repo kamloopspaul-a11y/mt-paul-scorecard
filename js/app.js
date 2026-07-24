@@ -11,6 +11,11 @@ import { buildSettingsRecord } from './settings-record.js';
 import { loadCourseData, getHolesForTee, getPar } from './course-data.js';
 import { KEYS, readJSON, writeJSON, remove, appendToArray } from './storage.js';
 import { buildAnalytics, loadHandicapRatings, markWeekAnimated } from './stats.js';
+import {
+  TOGGLE_ON_GRADIENT, TOGGLE_OFF_GRADIENT,
+  TOGGLE_ON_SHADOW, TOGGLE_OFF_SHADOW,
+  TOGGLE_KNOB_ON_POS, TOGGLE_KNOB_OFF_POS
+} from './stats-defaults.js';
 
 const appEl = document.getElementById('app');
 
@@ -29,13 +34,15 @@ let weatherState = { temp: '', wind: '' };
 
 // --- App state (module-level, single source of truth for the UI) ---
 const state = {
-  screen: 'loading', // loading | onboarding | setup | settings | home | hole | finalscore | reports
+  screen: 'loading', // loading | onboarding | setup | settings | home | hole | finalscore | front9score | reports
   settings: null,     // settings-record.js shape (+ app-shell-only `onboarded` flag)
   currentRound: null, // { tee, playerName, startHoleNum, sessionLength, holes: [] }
   draft: null,        // in-progress edits for the hole currently on screen
   toastMsg: null,
   toastTimer: null,
-  fromSettings: false // whether Setup screen was opened from Home > Settings (vs first run)
+  fromSettings: false, // whether Setup screen was opened from Home > Settings (vs first run)
+  menuOpen: false,     // Pass 6 Fix 3: hamburger slide-out menu, available from every topbar
+  front9Continue: true // Pass 6 Fix 6: Front 9 Score screen's Continue/Quit toggle (Case A only)
 };
 
 function pad2(n) { return n < 10 ? '0' + n : String(n); }
@@ -92,6 +99,22 @@ async function init() {
     // — the next Play 18/Play 9 tap's startRound() then silently overwrote
     // and permanently lost it. Resume straight into Final Score instead.
     state.screen = 'finalscore';
+  } else if (
+    state.currentRound &&
+    Array.isArray(state.currentRound.holes) &&
+    state.currentRound.startHoleNum === 1 &&
+    state.currentRound.holes.length === 9
+  ) {
+    // Pass 6: the front nine just finished (write-before-navigate already
+    // persisted all 9 holes) but the app closed/crashed before the new
+    // Front 9 Score screen's Continue/Quit (18-hole session) or Post Now
+    // (standalone 9-hole session) action was taken. Resume straight into
+    // that review screen — same crash-resilience contract as the completed-
+    // 18-hole-round case above, just one screen earlier in the flow.
+    state.front9Continue = true;
+    state.screen = 'front9score';
+    render();
+    return;
   } else if (
     state.currentRound &&
     Array.isArray(state.currentRound.holes) &&
@@ -170,7 +193,7 @@ function goToHoleScreen() {
     gir: false,
     pen: false,
     ud: false,
-    putts: 0
+    putts: 2 // Pass 6 Fix 4: realistic default — most holes are 2-putt (was 0)
   };
   state.screen = 'hole';
   render();
@@ -185,11 +208,75 @@ function commitHoleAndAdvance() {
   writeJSON(KEYS.CURRENT_ROUND, cr); // <-- write-before-navigate, per spec
   state.draft = null;
 
+  // Pass 6 Fix 6: the front nine (holes 1-9) just completed — show the
+  // Front 9 Score review screen instead of silently continuing. This covers
+  // both an 18-hole session mid-flight (sessionLength 18) and a deliberate
+  // standalone 9-hole session (sessionLength 9), which previously went
+  // straight into Hole 10 or straight into resolveNineAndSave() with no
+  // interstitial. Back-nine sessions (startHoleNum 10) are untouched — they
+  // still fall through to the finishSession()/goToHoleScreen() logic below.
+  if (cr.startHoleNum === 1 && cr.holes.length === 9) {
+    state.front9Continue = true; // default toggle position — Continue active
+    state.screen = 'front9score';
+    render();
+    return;
+  }
+
   if (cr.holes.length >= cr.sessionLength) {
     finishSession();
   } else {
     goToHoleScreen();
   }
+}
+
+// Pops the most recently committed hole back into the editable draft and
+// returns to the hole screen — the same pattern the Final Score screen's
+// Back button already used, generalized (Pass 6 Fix 5) so every hole
+// screen's Back button and the Front 9 Score screen's Back button can share
+// it too.
+function popPreviousHoleIntoDraft() {
+  const cr = state.currentRound;
+  if (cr && cr.holes.length) {
+    state.draft = cr.holes.pop();
+    writeJSON(KEYS.CURRENT_ROUND, cr);
+  }
+  state.screen = 'hole';
+  render();
+}
+
+// Hole screen Back button handler (Pass 6 Fix 5). Every hole 2-18 pops the
+// previous hole back into the draft — EXCEPT Hole 10, whose Back must return
+// to the new Front 9 Score screen instead (Fix 5's documented exception):
+// Hole 9's entry stays committed/untouched in currentRound.holes, since the
+// Front 9 Score screen already shows the full front-9 card for review.
+function goBackFromHole() {
+  const d = state.draft;
+  const cr = state.currentRound;
+  if (d.holeNum === 10 && cr.startHoleNum === 1) {
+    state.draft = null;
+    state.front9Continue = true;
+    state.screen = 'front9score';
+    render();
+    return;
+  }
+  popPreviousHoleIntoDraft();
+}
+
+// Shared by the Front 9 Score screen's Quit path (Case A, 18-hole session)
+// and its Post Now path (Case B, standalone 9-hole session) — the exact same
+// save-as-widow-or-paired flow finishSession() already ran silently for a
+// completed standalone 9-hole session; now triggered explicitly from the
+// reviewable Front 9 Score screen instead of automatically on hole 9's commit.
+function finishFrontNineNow() {
+  const cr = state.currentRound;
+  const nine = buildNineHoleRecord({
+    date: new Date().toISOString(),
+    playerName: cr.playerName,
+    tee: cr.tee,
+    half: 'front',
+    holes: cr.holes
+  });
+  resolveNineAndSave(nine);
 }
 
 // A session (9 or 18 holes) just reached its target length by natural play
@@ -400,11 +487,60 @@ function render() {
     case 'home': html = renderHome(); break;
     case 'hole': html = renderHole(); break;
     case 'finalscore': html = renderFinalScore(); break;
+    case 'front9score': html = renderFront9Score(); break;
     case 'reports': html = renderReports(); break;
     default: html = '<div class="screen"><p>Loading…</p></div>';
   }
-  appEl.innerHTML = html;
+  appEl.innerHTML = html + menuOverlayHTML();
   attachHandlers();
+}
+
+// Shared topbar markup (logo + hamburger menu button) — every screen except
+// Onboarding uses this exact markup (Pass 6 Fix 3 wires the ⋮ button up to a
+// real slide-out menu; previously decorative/non-interactive, per Session 7).
+function topbarHTML() {
+  return `
+    <div class="topbar"><img class="brand-logo" src="assets/Logos/mt_paul_logo_vector.svg" alt="Mt. Paul Golf Course" />
+      <button class="icon-btn" id="btn-menu" aria-label="Menu">&#8942;</button></div>
+  `;
+}
+
+// Pass 6 Fix 3: real slide-out hamburger menu — a fixed backdrop + panel
+// rendered on top of whatever screen is currently showing, toggled via
+// state.menuOpen. Appended alongside (not instead of) the current screen's
+// html in render() above, so it's available from every screen with a
+// topbar without making the menu screen-specific. Closing it (✕ or backdrop
+// tap) without picking a nav item leaves state.screen/state.draft/
+// state.currentRound completely untouched — it's purely an overlay.
+function menuOverlayHTML() {
+  if (!state.menuOpen) return '';
+  return `
+    <div class="menu-scrim" id="menu-scrim"></div>
+    <div class="menu-flyout" id="menu-flyout">
+      <div class="menu-header">
+        <span class="menu-label">Menu</span>
+        <button class="menu-close" id="menu-close" aria-label="Close menu">&times;</button>
+      </div>
+      <button class="menu-item" id="menu-item-analytics">Analytics</button>
+      <button class="menu-item" id="menu-item-play">Play Round</button>
+      <button class="menu-item menu-item-last" id="menu-item-settings">Settings</button>
+    </div>
+  `;
+}
+
+// Pass 6 Fix 7: shared birdie/bogey/double-bogey+ scorecard cell styling —
+// the ONE place these thresholds live, used by both renderFinalScore() and
+// renderFront9Score() so neither can drift out of sync with the other.
+//   score < par        -> birdie: circled digit
+//   score === par + 1   -> bogey: boxed/squared digit
+//   score >= par + 2    -> double-bogey-or-worse: tinted cell background
+//   score === par       -> plain, no decoration
+function scoreCellHTML(score, par) {
+  if (par == null) return `<td>${score}</td>`;
+  if (score < par) return `<td><span class="score-circle">${score}</span></td>`;
+  if (score === par + 1) return `<td><span class="score-square">${score}</span></td>`;
+  if (score >= par + 2) return `<td class="score-tint">${score}</td>`;
+  return `<td>${score}</td>`;
 }
 
 // ===================== Screen: Onboarding =====================
@@ -447,8 +583,7 @@ function renderSetup() {
 
   return `
     <div class="screen">
-      <div class="topbar"><img class="brand-logo" src="assets/Logos/mt_paul_logo_vector.svg" alt="Mt. Paul Golf Course" />
-        <button class="icon-btn" aria-hidden="true" tabindex="-1">&#8942;</button></div>
+      ${topbarHTML()}
       <h1 style="margin-bottom:6px;">Settings</h1>
       <div class="weather-readout" id="weather-readout">${weatherText}</div>
       <div class="card">
@@ -550,8 +685,7 @@ function renderHome() {
 
   return `
     <div class="screen">
-      <div class="topbar"><img class="brand-logo" src="assets/Logos/mt_paul_logo_vector.svg" alt="Mt. Paul Golf Course" />
-        <button class="icon-btn" aria-hidden="true" tabindex="-1">&#8942;</button></div>
+      ${topbarHTML()}
       <div class="home-hero">
         <h1>A Bit of Bogey</h1>
         ${settings.playerName ? `<div class="player-name">Welcome back, ${escapeAttr(settings.playerName)}</div>` : ''}
@@ -577,15 +711,19 @@ function renderHole() {
   const isLastOfSession = (cr.holes.length + 1) >= cr.sessionLength;
   const playerName = cr.playerName || '';
   const nextLabel = isLastOfSession ? 'Finish' : ('Play It' + (playerName ? ' ' + playerName.split(' ')[0] : ''));
+  // Pass 6 Fix 5: every hole 2-18 gets a Back button alongside Next — except
+  // the very first hole played in this session (nothing committed yet in
+  // currentRound.holes, so there's nothing to go back to). This is based on
+  // holes played this session, not literally holeNum === 1, so a standalone
+  // back-9 session (starts at Hole 10 with zero holes committed) also
+  // correctly gets no Back button on its first hole.
+  const showBack = cr.holes.length > 0;
 
   const photoNum = pad2(d.holeNum);
 
   return `
     <div class="screen">
-      <div class="topbar">
-        <img class="brand-logo" src="assets/Logos/mt_paul_logo_vector.svg" alt="Mt. Paul Golf Course" />
-        <button class="icon-btn" aria-hidden="true" tabindex="-1">&#8942;</button>
-      </div>
+      ${topbarHTML()}
       <div class="hole-top-row">
         <div class="hole-header">
           <h1>Hole ${d.holeNum} · Par ${d.par}</h1>
@@ -605,25 +743,69 @@ function renderHole() {
         ${rockerHTML('gir', 'GIR', d.gir)}
         ${rockerHTML('pen', 'PEN', d.pen)}
         ${rockerHTML('ud', 'UD', d.ud)}
-        <div class="putts-control">
-          <button id="putts-plus" aria-label="Increase putts">▲</button>
-          <div class="putts-value">${d.putts}</div>
-          <button id="putts-minus" aria-label="Decrease putts">▼</button>
-          <span class="rocker-label" style="margin-top:2px;">Putts</span>
-        </div>
+        ${puttsColumnHTML(d.putts)}
       </div>
       <div class="hole-photo" style="background-image:url('assets/${photoNum}-Hole.png');"></div>
-      <button class="btn" id="btn-next-hole">${nextLabel}</button>
+      <div class="btn-row">
+        ${showBack ? '<button class="btn secondary" id="btn-back-hole">Back</button>' : ''}
+        <button class="btn" id="btn-next-hole">${nextLabel}</button>
+      </div>
       <div class="quit-link"><button id="btn-quit">Quit</button></div>
     </div>
   `;
 }
 
+// Pass 6 Fix 1: Stats Console rebuild — ported field-for-field from the
+// reference component (Design Handoff/Stats Counter.dc.html). The track
+// (.rocker-pill) is ALWAYS rgba(0,0,0,.4) regardless of on/off state; only
+// the knob moves (top: TOGGLE_KNOB_ON_POS/OFF_POS) and recolors (TOGGLE_ON_
+// GRADIENT/OFF_GRADIENT + matching shadow), all four constants imported
+// directly from js/stats-defaults.js — the one place they're allowed to
+// live, per the standing "don't touch stats-defaults.js" instruction; this
+// file only ever reads them. The label itself dims/brightens with the same
+// on/off state (full-strength when achieved, rgba(...,.45) when not) via the
+// `.rocker-label.on` / plain `.rocker-label` CSS rule in styles.css, which
+// also branches on body.dark-mode for the two color pairs the reference's
+// `light` prop selects between.
 function rockerHTML(key, label, on) {
+  const knobTop = on ? TOGGLE_KNOB_ON_POS : TOGGLE_KNOB_OFF_POS;
+  const knobBg = on ? TOGGLE_ON_GRADIENT : TOGGLE_OFF_GRADIENT;
+  const knobShadow = on ? TOGGLE_ON_SHADOW : TOGGLE_OFF_SHADOW;
   return `
-    <div class="rocker">
-      <button class="rocker-pill ${on ? 'on' : ''}" data-key="${key}" id="rocker-${key}"><span class="dot"></span></button>
-      <span class="rocker-label">${label}</span>
+    <div class="rocker-col">
+      <div class="rocker-lift">
+        <button class="rocker-pill" data-key="${key}" id="rocker-${key}" aria-label="${label}" aria-pressed="${on ? 'true' : 'false'}">
+          <span class="knob" style="top:${knobTop};background:${knobBg};box-shadow:${knobShadow};"></span>
+        </button>
+        <span class="rocker-label${on ? ' on' : ''}">${label}</span>
+      </div>
+    </div>
+  `;
+}
+
+// Putts column (Fix 1): up-arrow -> white rounded value box (Spline Sans Mono
+// digit) -> "PUTTS" label -> down-arrow, all CSS-triangle arrows in #6B7C85,
+// occupying the 5th equal grid column alongside the four rockers above so
+// every column (including this one) bottom-aligns its label on the same
+// shared baseline (see .rockers-row's `align-items: end` + each column's
+// height:100%/justify-content:flex-end wrapper in styles.css) — the "label
+// baseline rule" the reference component encodes via two different
+// translateY lift amounts (rockers lift further than the shorter Putts
+// stepper) so both groups' labels land on the exact same line despite very
+// different internal column heights.
+function puttsColumnHTML(putts) {
+  return `
+    <div class="rocker-col">
+      <div class="putts-lift">
+        <button class="putts-arrow" id="putts-plus" aria-label="Increase putts">
+          <span class="tri tri-up"></span>
+        </button>
+        <div class="putts-box"><span class="putts-value">${putts}</span></div>
+        <span class="rocker-label on">Putts</span>
+        <button class="putts-arrow putts-arrow-down" id="putts-minus" aria-label="Decrease putts">
+          <span class="tri tri-down"></span>
+        </button>
+      </div>
     </div>
   `;
 }
@@ -643,12 +825,11 @@ function renderFinalScore() {
 
   const holeRowCells = (arr) => arr.map((h) => `<th>${h.holeNum}</th>`).join('');
   const parRowCells = (arr) => arr.map((h) => `<td>${h.par}</td>`).join('');
-  const scoreRowCells = (arr) => arr.map((h) => `<td>${h.score}</td>`).join('');
+  const scoreRowCells = (arr) => arr.map((h) => scoreCellHTML(h.score, h.par)).join('');
 
   return `
     <div class="screen">
-      <div class="topbar"><img class="brand-logo" src="assets/Logos/mt_paul_logo_vector.svg" alt="Mt. Paul Golf Course" />
-        <button class="icon-btn" aria-hidden="true" tabindex="-1">&#8942;</button></div>
+      ${topbarHTML()}
       <div class="final-score-header">
         <h1>Final Score</h1>
         <div class="total-score">${preview.totalScore}</div>
@@ -669,6 +850,70 @@ function renderFinalScore() {
       <div class="btn-row">
         <button class="btn secondary" id="btn-back-to-hole18">Back</button>
         <button class="btn" id="btn-save-final">Save</button>
+      </div>
+    </div>
+  `;
+}
+
+// ===================== Screen: Front 9 Score (Pass 6 Fix 6) =====================
+//
+// Shown after Hole 9 completes, in BOTH an 18-hole session mid-flight and a
+// deliberate standalone 9-hole session — see commitHoleAndAdvance() for the
+// routing. Two cases, distinguished by cr.sessionLength:
+//   Case A (sessionLength === 18): a real Continue/Quit toggle. Continue
+//     advances into Hole 10; Quit runs the same save-as-widow flow a mid-
+//     round Quit already uses (half: 'front').
+//   Case B (sessionLength === 9): a deliberate standalone nine has nothing to
+//     "continue" to, so no toggle is shown — Next is relabeled "Post Now" and
+//     always runs the save flow (this is exactly today's finishSession()
+//     behavior for a 9-hole session, just shown as a reviewable scorecard
+//     first instead of happening silently).
+// Back (either case) pops Hole 9 back into the draft for editing — the
+// Hole-10-only Back exception lives in goBackFromHole(), not here.
+function renderFront9Score() {
+  const cr = state.currentRound;
+  const front = cr.holes.slice(0, 9); // exactly the 9 just-committed entries
+  const totalScore = front.reduce((s, h) => s + h.score, 0);
+  const parTotal = front.reduce((s, h) => s + h.par, 0);
+
+  const holeRowCells = front.map((h) => `<th>${h.holeNum}</th>`).join('');
+  const parRowCells = front.map((h) => `<td>${h.par}</td>`).join('');
+  const scoreRowCells = front.map((h) => scoreCellHTML(h.score, h.par)).join('');
+
+  const isStandaloneNine = cr.sessionLength === 9;
+  const continueOn = state.front9Continue !== false;
+
+  const toggleOrPostNowHTML = isStandaloneNine
+    ? `<div class="row-toggle" style="border-bottom:none; justify-content:center;">
+        <span class="toggle-label">Post Now</span>
+      </div>`
+    : `<div class="row-toggle" style="border-bottom:none; justify-content:center; gap:14px;">
+        <span class="toggle-label ${continueOn ? '' : 'dim'}">Continue</span>
+        <div class="switch ${continueOn ? 'state-a' : 'state-b'}" id="toggle-front9">
+          <div class="knob"></div>
+        </div>
+        <span class="toggle-label ${continueOn ? 'dim' : ''}">Quit</span>
+      </div>`;
+
+  return `
+    <div class="screen">
+      ${topbarHTML()}
+      <div class="final-score-header">
+        <h1>Front 9 Score</h1>
+        <div class="total-score">${totalScore}</div>
+      </div>
+      <table class="scorecard">
+        <thead><tr class="holes-row"><th>H</th>${holeRowCells}<th class="total">Out</th></tr></thead>
+        <tbody>
+          <tr class="par-row"><td>Par</td>${parRowCells}<td class="total">${parTotal}</td></tr>
+          <tr class="score-row-data"><td>${escapeAttr((cr.playerName || 'You').split(' ')[0])}</td>${scoreRowCells}<td class="total">${totalScore}</td></tr>
+        </tbody>
+      </table>
+      ${toggleOrPostNowHTML}
+      <div class="hole-photo" style="background-image:url('assets/09-Score-Card.png'); min-height:200px;"></div>
+      <div class="btn-row">
+        <button class="btn secondary" id="btn-front9-back">Back</button>
+        <button class="btn" id="btn-front9-next">${isStandaloneNine ? 'Post Now' : 'Next'}</button>
       </div>
     </div>
   `;
@@ -700,8 +945,7 @@ function renderReports() {
 
   return `
     <div class="screen reports-screen">
-      <div class="topbar"><img class="brand-logo" src="assets/Logos/mt_paul_logo_vector.svg" alt="Mt. Paul Golf Course" />
-        <button class="icon-btn" aria-hidden="true" tabindex="-1">&#8942;</button></div>
+      ${topbarHTML()}
       <h1 style="margin-bottom:4px;">Analytics</h1>
       <div class="report-date">${asOfDate}</div>
       ${body}
@@ -1045,6 +1289,7 @@ function attachHandlers() {
       const puttsMinus = document.getElementById('putts-minus');
       const puttsPlus = document.getElementById('putts-plus');
       const nextBtn = document.getElementById('btn-next-hole');
+      const backBtn = document.getElementById('btn-back-hole');
       const quitBtn = document.getElementById('btn-quit');
 
       if (scoreMinus) scoreMinus.addEventListener('click', () => {
@@ -1063,33 +1308,58 @@ function attachHandlers() {
         d.putts = Math.min(9, d.putts + 1);
         renderHoleStatOnly();
       });
+      // Pass 6 Fix 1: toggling a rocker now changes three things at once
+      // (knob top/background/shadow inline styles + the label's dim/bright
+      // class) rather than a single class flip, so a full re-render is the
+      // simplest correct way to keep all three in sync — same pattern the
+      // hamburger menu and Front 9 Continue/Quit toggle already use.
       ['fir', 'gir', 'pen', 'ud'].forEach((key) => {
         const el = document.getElementById('rocker-' + key);
         if (el) el.addEventListener('click', () => {
           d[key] = !d[key];
-          el.classList.toggle('on', !!d[key]);
+          render();
         });
       });
       if (nextBtn) nextBtn.addEventListener('click', () => commitHoleAndAdvance());
+      if (backBtn) backBtn.addEventListener('click', () => goBackFromHole());
       if (quitBtn) quitBtn.addEventListener('click', () => quitCurrentRound());
       break;
     }
     case 'finalscore': {
       const backBtn = document.getElementById('btn-back-to-hole18');
       const saveBtn = document.getElementById('btn-save-final');
-      if (backBtn) {
-        backBtn.addEventListener('click', () => {
-          // Pop the last recorded hole back into edit so the user can adjust it.
-          const cr = state.currentRound;
-          if (cr && cr.holes.length) {
-            state.draft = cr.holes.pop();
-            writeJSON(KEYS.CURRENT_ROUND, cr);
-          }
-          state.screen = 'hole';
+      if (backBtn) backBtn.addEventListener('click', () => popPreviousHoleIntoDraft());
+      if (saveBtn) saveBtn.addEventListener('click', () => saveFinalRound());
+      break;
+    }
+    case 'front9score': {
+      const cr = state.currentRound;
+      const isStandaloneNine = cr.sessionLength === 9;
+      const toggle = document.getElementById('toggle-front9');
+      const backBtn = document.getElementById('btn-front9-back');
+      const nextBtn = document.getElementById('btn-front9-next');
+
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          state.front9Continue = !state.front9Continue;
           render();
         });
       }
-      if (saveBtn) saveBtn.addEventListener('click', () => saveFinalRound());
+      if (backBtn) backBtn.addEventListener('click', () => popPreviousHoleIntoDraft());
+      if (nextBtn) {
+        nextBtn.addEventListener('click', () => {
+          if (isStandaloneNine) {
+            // Case B: standalone 9-hole session — always the save flow.
+            finishFrontNineNow();
+          } else if (state.front9Continue !== false) {
+            // Case A, Continue: advance into Hole 10.
+            goToHoleScreen();
+          } else {
+            // Case A, Quit: save this front nine as a widow/paired round.
+            finishFrontNineNow();
+          }
+        });
+      }
       break;
     }
     case 'reports': {
@@ -1098,6 +1368,30 @@ function attachHandlers() {
       break;
     }
   }
+  attachMenuHandlers();
+}
+
+// Pass 6 Fix 3: wired unconditionally (not inside the switch above) since
+// the ⋮ button + menu overlay are available from every screen with a
+// topbar, not just one. No-ops harmlessly on screens without a topbar
+// (Onboarding) since getElementById just returns null there.
+function attachMenuHandlers() {
+  const menuBtn = document.getElementById('btn-menu');
+  if (menuBtn) menuBtn.addEventListener('click', () => { state.menuOpen = true; render(); });
+
+  if (!state.menuOpen) return;
+  const scrim = document.getElementById('menu-scrim');
+  const closeBtn = document.getElementById('menu-close');
+  const itemAnalytics = document.getElementById('menu-item-analytics');
+  const itemPlay = document.getElementById('menu-item-play');
+  const itemSettings = document.getElementById('menu-item-settings');
+
+  const closeMenu = () => { state.menuOpen = false; render(); };
+  if (scrim) scrim.addEventListener('click', closeMenu);
+  if (closeBtn) closeBtn.addEventListener('click', closeMenu);
+  if (itemAnalytics) itemAnalytics.addEventListener('click', () => { state.menuOpen = false; state.screen = 'reports'; render(); });
+  if (itemPlay) itemPlay.addEventListener('click', () => { state.menuOpen = false; state.screen = 'home'; render(); });
+  if (itemSettings) itemSettings.addEventListener('click', () => { state.menuOpen = false; state.fromSettings = true; state.screen = 'setup'; render(); });
 }
 
 // Lightweight partial re-render for putts (avoids full re-render on every tap).

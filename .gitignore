@@ -9,3 +9,8 @@ assets/files.zip
 /Film Theme Score Tracker.zip
 assets/Originals/
 assets/Image-Template.af
+
+# Stray leftover file from an earlier session (harmless fragment of app.js);
+# sandbox can't unlink it due to the iCloud EPERM issue -- Paul, please
+# delete Projects/ScoreCard/q via Finder when convenient.
+/q

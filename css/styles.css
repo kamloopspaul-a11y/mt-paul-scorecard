@@ -24,6 +24,18 @@
      ui = spaced-out uppercase labels (buttons, toggles, rockers, headings). */
   --font-marquee: 'Bebas Neue', Impact, "Arial Narrow Bold", var(--font);
   --font-ui: 'Hanken Grotesk', var(--font);
+  --font-mono: 'Spline Sans Mono', 'SFMono-Regular', Consolas, monospace;
+  /* Pass 6 Fix 1: the horizontal switches' knob on/off colors, duplicated
+     from js/stats-defaults.js's TOGGLE_ON_GRADIENT / TOGGLE_OFF_GRADIENT /
+     TOGGLE_ON_SHADOW / TOGGLE_OFF_SHADOW exports (plain CSS can't import a JS
+     module, and the rockers already read those constants directly in
+     js/app.js's rockerHTML() — this is the CSS-side mirror for the generic
+     .switch element, used by Show/Hide Stats and the new Front 9 Continue/
+     Quit toggle). Keep in sync if stats-defaults.js's values ever change. */
+  --switch-on-knob: linear-gradient(160deg,#E0455A,#8C2E39);
+  --switch-off-knob: linear-gradient(160deg,#8C2E39,#5C1620);
+  --switch-on-shadow: 0 3px 8px rgba(0,0,0,.5);
+  --switch-off-shadow: none;
 }
 
 * { box-sizing: border-box; }
@@ -108,6 +120,16 @@ h2, h3 {
   height: 34px;
   width: auto;
   display: block;
+}
+/* Pass 6 Fix 2: the source SVG's own fill renders white — correct against a
+   dark background, wrong against Light Mode's cream topbar (#F4EFE3), where
+   it was effectively invisible. brightness(0) turns every non-transparent
+   pixel pure black while preserving the SVG's alpha channel, regardless of
+   its internal fill colors — applied only outside dark mode; dark mode's
+   white-on-dark rendering is unfiltered (no dark-mode mockup exists to
+   confirm either way, but white-on-dark reads correctly as-is). */
+body:not(.dark-mode) .brand-logo {
+  filter: brightness(0) saturate(100%);
 }
 
 .icon-btn {
@@ -267,7 +289,12 @@ h2, h3 {
   width: 62px;
   height: 30px;
   border-radius: 15px;
-  background: linear-gradient(160deg,#8C2E39,#5C1620);
+  /* Pass 6 Fix 1: every toggle track (this + the vertical rocker pills below)
+     shares the same rgba(0,0,0,.4) track background, matching the mockups —
+     was a maroon brand-color gradient before, which didn't match the rocker
+     pills and didn't match the reference design tokens either. The track
+     NEVER recolors on toggle, in either direction — only the knob below does. */
+  background: rgba(0,0,0,.4);
   cursor: pointer;
   flex: 0 0 auto;
 }
@@ -278,13 +305,23 @@ h2, h3 {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: #C0392B;
-  transition: left .15s ease;
-  box-shadow: 0 2px 4px rgba(0,0,0,.4);
+  /* Default/off knob color — the generic (non-tee, non-mode) switch case,
+     i.e. Show/Hide Stats and the new Front 9 Continue/Quit toggle. Uses the
+     same red/maroon on-off gradient pair the rockers use (--switch-on-knob/
+     --switch-off-knob, mirroring js/stats-defaults.js) rather than the old
+     hardcoded flat red that then incorrectly turned blue on state-b (see
+     below) — bug found and fixed this pass. */
+  background: var(--switch-off-knob);
+  box-shadow: var(--switch-off-shadow);
+  transition: left .15s ease, background .15s ease, box-shadow .15s ease;
 }
-.switch.state-b .knob { left: 35px; background: var(--blue-tee); }
-.switch.tee.state-a .knob { background: var(--blue-tee); left: 3px; }
-.switch.tee.state-b .knob { background: var(--red-tee); left: 35px; }
+.switch.state-a .knob { background: var(--switch-on-knob); box-shadow: var(--switch-on-shadow); }
+.switch.state-b .knob { left: 35px; background: var(--switch-off-knob); box-shadow: var(--switch-off-shadow); }
+/* Tee switch keeps its own blue/red tee-color semantics (not the generic
+   on/off red gradient) — higher specificity than the two rules above, so
+   this still wins for the Tee toggle specifically. */
+.switch.tee.state-a .knob { background: var(--blue-tee); left: 3px; box-shadow: none; }
+.switch.tee.state-b .knob { background: var(--red-tee); left: 35px; box-shadow: none; }
 
 /* --- Home --- */
 .home-hero {
@@ -375,87 +412,140 @@ h2, h3 {
   text-align: center;
 }
 
+/* Pass 6 Fix 1: Stats Console rebuild, ported field-for-field from Design
+   Handoff/Stats Counter.dc.html (the dedicated reference component no prior
+   pass used). A single 5-equal-column grid (FIR/GIR/PEN/UD/Putts),
+   `align-items: end` so every column's own bottom edge lands on the grid
+   row's bottom line — combined with each column being a height:100%,
+   justify-content:flex-end wrapper (`.rocker-col`), that's what makes every
+   rendered column's LAST child (the label, in both the rocker and Putts
+   case) sit on one shared baseline regardless of how tall each column's
+   *own* content is above that label. The row's height (152px) matches the
+   reference's fixed canvas height — NOT its 406px canvas WIDTH, which this
+   fluid-width app deliberately does not hardcode (the grid's 1fr columns
+   fill whatever width the screen has). The two translateY lifts below
+   (-45px rockers / -7px putts) are the reference's own literal values,
+   which hold exactly because every dimension feeding into them (32x62
+   track, 24px knob, 18px label, 44px/28px putts box/arrows) is also ported
+   at the reference's literal pixel sizes, not scaled — see the worked
+   arithmetic in this session's JOURNAL.md entry for why both lifts land the
+   label on the same line despite very different column content heights. */
 .rockers-row {
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  gap: 18px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: end;
+  gap: 8px;
+  height: 152px;
   margin-bottom: 24px;
 }
-/* Bug fix (Pass 5): FIR now renders on every hole including par-3s (Fix 1),
-   so the rockers row is always FIR+GIR+PEN+UD (4 pills) plus the Putts
-   control, not sometimes-3-sometimes-4 as before. At 18px gaps and 46px
-   pills that's ~306px of required width, which clears typical 375px+ phones
-   but can overflow the narrowest supported screens (~320px logical width)
-   since this row has no wrap/scroll and .screen doesn't clip overflow-x —
-   tighten the gap and pill size a bit below 360px so nothing pushes past
-   the viewport edge. */
+/* Bug fix (Pass 5), still relevant post-rebuild: FIR renders on every hole
+   including par-3s, so the row is always 5 columns, never 4. The new grid
+   layout (equal 1fr columns, 32px pills) has far more headroom than the old
+   flex/46px-pill layout did, but the safeguard stays in place per standing
+   instruction — tightened further only if needed on the narrowest screens. */
 @media (max-width: 360px) {
-  .rockers-row { gap: 10px; }
-  .rocker-pill { width: 40px; }
+  .rockers-row { gap: 4px; height: 140px; }
+  .rocker-lift, .putts-lift { gap: 6px; }
 }
-.rocker {
+.rocker-col {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  min-width: 0;
+}
+.rocker-lift {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  transform: translateY(-45px);
 }
 .rocker-pill {
-  width: 46px;
-  height: 78px;
-  border-radius: 23px;
+  width: 32px;
+  height: 62px;
+  border-radius: 16px;
   border: none;
+  border-right: 1px solid rgba(255,255,255,.3);
   cursor: pointer;
   position: relative;
-  background: linear-gradient(160deg,#8C2E39,#5C1620);
-  box-shadow: none;
+  padding: 0;
+  /* Track is ALWAYS rgba(0,0,0,.4), on or off — only the knob (.knob, below)
+     moves and recolors. Inset shadow per the reference's literal values. */
+  background: rgba(0,0,0,.4);
+  box-shadow: inset 2px 2px 5px rgba(0,0,0,.5), inset -1px -1px 2px rgba(255,255,255,.04);
 }
-.rocker-pill .dot {
+.rocker-pill .knob {
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 3px;
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: #C0392B;
-  top: 48px; /* off (default/not-achieved) = dot low in the pill — see
-                Design-Screens/03-hole1.png etc. and the reference impl's
-                TOGGLE_KNOB_OFF_POS; was inverted vs. mockup before Pass 4 */
-  transition: top .15s ease, background .15s ease;
+  /* top/background/box-shadow are set inline per rocker, per state, in
+     js/app.js's rockerHTML() — driven directly from js/stats-defaults.js's
+     TOGGLE_KNOB_ON_POS/OFF_POS + TOGGLE_ON_GRADIENT/OFF_GRADIENT +
+     TOGGLE_ON_SHADOW/OFF_SHADOW exports, so this file and the JS never
+     drift apart on what "on" looks like. This rule only supplies the
+     transition and static geometry. */
+  transition: top .18s ease, background .18s ease;
 }
-.rocker-pill.on { background: linear-gradient(160deg,#E0455A,#8C2E39); box-shadow: 0 3px 8px rgba(0,0,0,.5); }
-.rocker-pill.on .dot { top: 6px; } /* on/achieved = dot rises to the top */
 .rocker-label {
-  font-family: var(--font-ui);
-  font-weight: 600;
+  font: 600 18px 'Hanken Grotesk', var(--font-ui);
+  letter-spacing: .08em;
   text-transform: uppercase;
-  font-size: 14px;
-  letter-spacing: 0.05em;
+  /* Dimmed (not-achieved) by default; `.on` (achieved) brightens to
+     full-strength — both pairs match the reference's `light`/dark-mode
+     color choices exactly. */
+  color: rgba(20,20,20,.45);
 }
-.putts-control {
+.rocker-label.on { color: #141414; }
+body.dark-mode .rocker-label { color: rgba(255,255,255,.45); }
+body.dark-mode .rocker-label.on { color: #fff; }
+
+/* Putts column — up-arrow, value box, "PUTTS" label, down-arrow, lifted off
+   the shared baseline by a much smaller amount than the rockers (-7px vs
+   -45px) since its own content nearly fills the row height already. */
+.putts-lift {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 10px;
+  transform: translateY(-7px);
 }
-.putts-control button {
+.putts-arrow {
+  width: 44px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
+  padding: 0;
   cursor: pointer;
-  color: var(--ink-muted);
-  font-size: 18px;
-  line-height: 1;
-  padding: 2px 10px;
+}
+.putts-arrow-down { transform: translateY(-6px); }
+.putts-arrow .tri {
+  width: 0;
+  height: 0;
+  border-left: 11px solid transparent;
+  border-right: 11px solid transparent;
+}
+.putts-arrow .tri-up { border-bottom: 16px solid #6B7C85; }
+.putts-arrow .tri-down { border-top: 16px solid #6B7C85; }
+.putts-box {
+  width: 32px;
+  height: 44px;
+  border-radius: 12px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 2px 2px 5px rgba(0,0,0,.4), inset -1px -1px 2px rgba(255,255,255,.6);
 }
 .putts-value {
-  background: #fff;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  min-width: 40px;
-  text-align: center;
-  font-weight: 800;
-  font-size: 18px;
-  padding: 4px 0;
+  font: 700 24px 'Spline Sans Mono', var(--font-mono);
+  color: #141414;
 }
 
 .hole-photo {
@@ -509,6 +599,33 @@ h2, h3 {
 }
 .scorecard tr.par-row td.total { background: #cfc7b3; }
 .scorecard tr.score-row-data td.total { background: var(--cta-end); color: #fff; }
+
+/* Pass 6 Fix 7: per-cell conditional styling on score rows, shared by Final
+   Score and the new Front 9 Score screen via js/app.js's scoreCellHTML() —
+   sampled from Design Handoff/Assets/09-Score-Card.png / 18-Score-Card.png's
+   sibling "05-finalscore.png" mockup, which shows exactly these three states. */
+.scorecard .score-circle {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  line-height: 19px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+}
+.scorecard .score-square {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  line-height: 19px;
+  border: 1.5px solid currentColor;
+}
+.scorecard td.score-tint {
+  /* Desaturated olive/sage, sampled directly from the mockup's double-bogey
+     cell (rgb(124,136,119)) — deliberately not the maroon brand color so it
+     reads as "notably bad" without being mistaken for a header/total cell. */
+  background: #7C8877;
+  color: #fff;
+}
 
 .final-score-header {
   display: flex;
@@ -776,6 +893,76 @@ h2, h3 {
   cursor: pointer;
 }
 .icon-square-btn:active { transform: translateY(1px); }
+
+/* --- Hamburger slide-out menu (Pass 6 Fix 3) ---
+   Real overlay: a dim/semi-transparent backdrop (.menu-scrim) behind a
+   fixed, near-black panel (.menu-flyout) sliding in from the right, covering
+   ~70% of the screen width (max-width caps it on wider viewports). Toggled
+   via state.menuOpen in js/app.js — rendered on top of whatever screen is
+   showing, same fixed-to-viewport pattern .toast already uses. */
+.menu-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.55);
+  z-index: 900;
+}
+.menu-flyout {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 70%;
+  max-width: 340px;
+  background: #111;
+  z-index: 901;
+  display: flex;
+  flex-direction: column;
+  padding-top: max(50px, env(safe-area-inset-top));
+  box-shadow: -24px 0 60px -24px rgba(0,0,0,.7);
+}
+.menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px 10px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
+.menu-label {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #9a9a9a;
+}
+.menu-close {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 20px 24px;
+  border: none;
+  border-top: 1px solid rgba(255,255,255,.08);
+  background: transparent;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff;
+  cursor: pointer;
+}
+.menu-item.menu-item-last {
+  border-bottom: 1px solid rgba(255,255,255,.08);
+}
 
 /* --- Dark mode (Pass 3) ---
    No dark-mode mockup exists for this build; keeps the maroon CTA gradient

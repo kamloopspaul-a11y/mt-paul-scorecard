@@ -11,7 +11,7 @@
 // hosted on GitHub Pages under a repo subpath, not domain root — see
 // manifest.json's start_url/scope for the same concern.
 
-const CACHE_NAME = 'bogey-v3'; // bumped in Pass 5 (debug/QA pass: FIR-on-every-hole fix + Weekly Trends anchoring fix touched js/app.js and js/stats.js; safe-area/narrow-viewport fixes touched css/styles.css; defensive appendToArray() fix touched js/storage.js)
+const CACHE_NAME = 'bogey-v4'; // bumped in Pass 6 (hamburger menu + Front 9 Score screen + Back/Next on every hole + scorecard cell styling touched js/app.js; toggle/rocker-pill track color + logo-black-in-light-mode + scorecard cell styling + menu overlay touched css/styles.css; new assets/09-Score-Card.png added to precache)
 
 const PRECACHE_URLS = [
   './',
@@ -52,7 +52,8 @@ const PRECACHE_URLS = [
   './assets/15-Hole.png',
   './assets/16-Hole.png',
   './assets/17-Hole.png',
-  './assets/18-Hole.png'
+  './assets/18-Hole.png',
+  './assets/09-Score-Card.png'
 ];
 
 self.addEventListener('install', (event) => {

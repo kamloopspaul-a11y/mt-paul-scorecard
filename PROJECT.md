@@ -6,7 +6,7 @@
 
 ## Status
 
-**Version:** v1.0 (Passes 1-5 of the initial build complete, 2026-07-23) — functional, not yet committed to git, not yet tested on a real device/browser.
+**Version:** v1.0 (Passes 1-6 of the initial build complete, 2026-07-24) — functional, not yet committed to git, not yet tested on a real device/browser.
 **Live URL:** https://kamloopspaul-a11y.github.io/mt-paul-scorecard/ (not yet redeployed with this build — still showing the old placeholder as of this writing).
 **GitHub repo:** `https://github.com/kamloopspaul-a11y/mt-paul-scorecard`.
 **Local folder:** `~/Documents/Studio/Projects/ScoreCard/`.
@@ -19,8 +19,9 @@
 - **Final Score → Save**: builds and appends a real round record to `rounds-history` in localStorage.
 - **Analytics/Reports screen**: Season Stats, Score Distribution, WHS-style Handicap Index (best-8-of-20 differentials × 0.96, truncated), 20-Round Average, per-hole Hole Ratings, Scrambling/Putting/Penalty splits, Weekly Trends (real-calendar-anchored, gated to 2+ rounds, with a one-time grow-in animation on a newly-revealed week), Today's Stats (gated to 1+ round), Membership ROI (cumulative savings + rounds-to-break-even, gated on Settings having real fee values).
 - **Settings screen**: name, dark/light mode (instant toggle), tee (Blue/Red), stats visibility, Membership Fee, Green Fees, a live weather readout (Open-Meteo, no key required), and a visible-but-disabled "Export Scores" row (CSV export/import is an explicitly deferred later phase — see below).
-- **PWA/offline**: `manifest.json` (GitHub-Pages-subpath-correct `start_url`/`scope`), a cache-first `sw.js` (versioned `bogey-v3`) precaching the full app shell, real icon set.
+- **PWA/offline**: `manifest.json` (GitHub-Pages-subpath-correct `start_url`/`scope`), a cache-first `sw.js` (versioned `bogey-v4`) precaching the full app shell, real icon set.
 - **Architecture**: multi-file (`index.html` + `css/styles.css` + `js/*.js` ES modules), not a single-file app. Data-layer modules (`round-record.js`, `settings-record.js`, `stats-defaults.js`) came verbatim from the design handoff and are considered stable/correct — don't rewrite their logic, only the app shell/UI around them.
+- **Pass 6 additions (2026-07-24 — real bugs found on the live build)**: Stats Console rebuilt field-for-field from `Design Handoff/Stats Counter.dc.html` (the FIR/GIR/PEN/UD rocker track is always `rgba(0,0,0,.4)`, only the knob moves/recolors, labels dim/brighten, Putts redesigned as arrow/box/arrow with a Spline Sans Mono digit); logo forced black in Light Mode (`brightness(0)` filter); a real slide-out hamburger menu (Analytics/Play Round/Settings) available from every topbar; putts now default to 2, not 0; every hole 2-18 has both Back and Next (Hole 10's Back goes to the new Front 9 Score screen instead of Hole 9); a new Front 9 Score mid-round scorecard screen after Hole 9 (Continue/Quit toggle for an 18-hole session in flight, Post Now for a standalone 9-hole session); shared `scoreCellHTML()` birdie/bogey/double-bogey+ cell styling on both Final Score and Front 9 Score. See `JOURNAL.md` Session 10 for full detail.
 
 ### Known limitations / open items
 - **Not yet tested in a real browser/device.** All verification this build cycle was via Node/jsdom harnesses (no headless browser available in the build sandbox) — a real on-device pass (especially the two new webfonts, dark mode, and offline/service-worker behavior) is recommended before sharing with Dave.
@@ -28,7 +29,7 @@
 - **Post-onboarding landing screen is still an open decision.** Right now, completing Setup for the first time lands on Home, and every later launch also lands on Home. Paul is considering having first-time completion land on Settings instead (so a new player reviews their info before playing), with Home only as the default on later launches — deferred until after this build review.
 - **No dark-mode source mockup exists** — the dark palette (dark background, off-white text, same maroon CTA gradient) was a judgment call, not a spec match.
 - **CSV Export/Import is deferred.** The Settings screen shows the row per the mockup but it's non-functional (shows a "coming soon" toast). See the "Export / Import — CSV Backup" section below for the already-researched spec to build against when this phase starts.
-- **`sw.js`'s `CACHE_NAME` must be bumped** (currently `bogey-v3`) any time a precached file's content changes, or already-installed users will keep serving stale assets.
+- **`sw.js`'s `CACHE_NAME` must be bumped** (currently `bogey-v4`) any time a precached file's content changes, or already-installed users will keep serving stale assets.
 
 ---
 
@@ -65,7 +66,7 @@ Decided 2026-07-07: this project splits into two separate builds before producti
 ## PWA Spec (as built)
 
 - `index.html` + `css/styles.css` + `js/*.js` (multi-file, ES modules) + `manifest.json` + `sw.js`
-- Service Worker: cache-first, versioned (`bogey-v3`), full app-shell precache
+- Service Worker: cache-first, versioned (`bogey-v4`), full app-shell precache
 - `display: standalone`, `viewport-fit=cover` with real `env(safe-area-inset-*)` usage
 - Theme colours: CTA gradient `#8C2E39` → `#5C1620`, light-mode background `#F4EFE3`, dark mode available
 - Fonts: Bebas Neue (titles/score numerals), Hanken Grotesk (UI labels), loaded from Google Fonts (system-font fallback when offline on first-ever launch)
@@ -107,7 +108,7 @@ Decision maker: Dan Latin (owner) or pro shop staff.
 | File | Notes |
 |------|-------|
 | `PROJECT.md` | This file |
-| `JOURNAL.md` | Session notes — Sessions 1-4 cover the old placeholder/style-exploration era; Sessions 5+ cover the real v1.0 build (Session 5 = CSV research, 6 = Analytics, 7 = Settings/weather/PWA, 8 = visual fidelity, 9 = debug pass) |
+| `JOURNAL.md` | Session notes — Sessions 1-4 cover the old placeholder/style-exploration era; Sessions 5+ cover the real v1.0 build (Session 5 = CSV research, 6 = Analytics, 7 = Settings/weather/PWA, 8 = visual fidelity, 9 = debug pass, 10 = Pass 6 bug-fix pass from live-build review) |
 | `CLAUDE.md` | Claude context for future sessions — kept in sync with this file |
 | `index.html` | Real app shell (replaced the placeholder 2026-07-23) |
 | `css/styles.css`, `js/*.js` | App code — see "What's built" above |
