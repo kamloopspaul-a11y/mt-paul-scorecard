@@ -1628,3 +1628,250 @@ Still open on device:
 - **A "bookmark-type" issue** Paul hit but couldn't pin down well enough to describe. Noted deliberately without a theory attached, so whatever it turns out to be isn't prejudged by a guess written down today. Needs the conditions that reproduce it before anything is changed.
 
 `sw.js` at `bogey-v8`; `index.html` at `?devcb38`.
+
+---
+
+## Session — 2026-07-26 — Local dev server; Settings + Analytics design pass; the "bookmark" issue identified
+
+### Local review loop
+
+Set up `dev-server.py` at the project root — `python3 dev-server.py`, no-cache headers on every response, correct `text/javascript` MIME for the ES modules, binds `0.0.0.0` so a phone on the same Wi-Fi can hit the printed LAN URL. Paul runs it in his own Terminal; review happened through Chrome against `localhost:8000`.
+
+Worth recording for next time: the LAN URL is plain `http://` on an IP, so it's a non-secure context and `navigator.serviceWorker` is undefined there. Layout checks work over LAN; **PWA/offline checks do not** and need either GitHub Pages or an HTTPS tunnel.
+
+Also noted: the app's existing localhost guard (`js/app.js`, `isLocalDev`) already unregisters the SW and clears caches on every local boot, so no DevTools "Bypass for network" is needed and the `?devcb` cache-busters are redundant locally.
+
+### Settings
+
+- Weather readout removed from Settings. **Start Round keeps its `16°C | 9 km/h` line, and the per-round capture is untouched** — `buildRoundRecord`'s `tempC`/`windKmh` is the one field that can't be backfilled, so the Open-Meteo fetch still runs on the Settings screen to keep `weatherState` warm.
+- `.card` is now transparent and borderless. Horizontal padding went to 0 at the same time: with no visible edge, the old 18px inset was indenting the fields relative to the SETTINGS heading and read as misalignment.
+- Settings' toggle rows moved from flex `space-between` to a `1fr auto 1fr` grid, so the four switches sit on one vertical axis instead of drifting a few px per row with label length. Scoped to `.card > .row-toggle` — the front-9 summary reuses `.row-toggle` with an inline `justify-content:center` that only means anything under flex.
+- Membership Fee / Green Fees are inline with their labels via a new `.field-inline`, both inputs a fixed 124px so they match regardless of value width.
+- "Green Fees" → "18 Holes Green Fee"; its help text is now the break-even line, and Membership Fee's duplicate copy was dropped. Analytics still says "Green Fee - 18 Holes" — same meaning, different word order, left alone for now.
+
+### Analytics
+
+- **Today's Round hero aligned to the chart below it.** The scoring chart is four `.bar-col`s under `space-around`, so bars centre at 1/8, 3/8, 5/8, 7/8. The row is now a `3fr/1fr` grid: the three stat columns land on the first three bars, the score sits over Bogey+. Measured, not eyeballed — tiles at 551/658/765 vs bars at 551/658/760, score dead on 872.
+- Score went 56px → **64px, not larger**. The hero column is ~107px and a three-digit score renders 107px at 68px — flush, no slack. At 64px it's 101px. Paul's live round is at 94/95, so 100+ is well within range. **Re-measure a 100+ score before raising this.**
+- `.today-round` margin-bottom 6px → 28px. Real separation from the chart was only 14px; it *looked* roomier than it was because `.bar-row` is bottom-aligned in a 120px min-height, so short bars donate empty space at the top. Judge this against a full-height bar, not sample data.
+- Weekly headings: "Birdies Each Week" → "**Birdies: Weekly Report**" (and Pars/Bogeys/Bogey+). Both render paths updated — live charts and the pre-round-2 locked placeholder — so they can't drift.
+- **Last 10 Rounds no longer scrolls.** Ten 58px columns at a 10px gap needed 670px against a 428px viewport, so ~3 rounds sat off the right edge — and being ordered oldest-left, the hidden ones were the most recent. New `.bar-row.thick.fit`: 1fr columns, 4px gap, ~39px each, `scrollWidth` now equals `clientWidth`.
+
+### Buttons — `.btn.secondary` removed entirely
+
+Analytics' Home was the white/outline `.btn.secondary`. Changed it to the CTA fill, then Paul: *"I have never requested a secondary look for my nav buttons. Remove that option."* So the variant is gone from the stylesheet and its last two users (Load / Clear Test Data) are plain `.btn.small`. There is now exactly one button treatment in the app, plus `.btn.ghost`, which is an underlined text link rather than a button look.
+
+The Pass 7 nav-row comment claiming Home/Setup/Reports "wants a primary/secondary contrast, e.g. Play 18 vs Play 9" was stale — no such pair exists anywhere in the current code. Corrected, so it stops inviting the outline style back.
+
+### The "bookmark-type" issue — identified and fixed
+
+The previous session close logged *"a 'bookmark-type' issue Paul hit but couldn't pin down well enough to describe."* **This was it.** Reloading while in Analytics threw you into a hole screen.
+
+Cause was never the flyout. `boot()`'s mid-flight branch called `resumeIntoHoleScreen()` whenever `currentRound.holes.length < sessionLength`, without ever looking at where the user was. Every reload from anywhere, mid-round, landed on a hole.
+
+Paul's framing: it should be *"a recovery / redundancy measure"* for leaving a hole screen to call the clubhouse or check another app — not every reload from anywhere.
+
+Built: a `last-screen` key (`{screen, at}`), stamped on every render, read once at boot. Restores `hole`/`reports`/`setup`/`startround` within a **30-minute TTL** (Paul: the only realistic mid-round pause is a rain delay). Outside the window, or with no/garbage memory, it resumes the round as before.
+
+**The TTL exists because a reload and a cold PWA launch are indistinguishable from inside the app.** Without it, opening the app the next morning would land on whatever screen you last used, contradicting the Pass 7 rule that a launch goes to Start Round.
+
+**Deliberately excluded: the `finalscore`/`front9score` crash-recovery branches.** Those prevent a completed-but-unsaved round being overwritten — permanent data loss — and must fire regardless of where the user was or how long ago. The new feature is convenience and is allowed to fail; those aren't. Don't merge the two.
+
+Verified in-browser against the running app: hole→hole, Analytics→Analytics, Settings→Settings, stale stamp (31 min)→resumes round, malformed `at`→resumes round, non-JSON garbage→resumes round. `currentRound` intact at 4 holes throughout.
+
+### Open
+
+- `sw.js` still at `bogey-v8` — **needs bumping before deploy**; `css/styles.css`, `js/app.js` and `js/storage.js` all changed materially this session.
+- Last 10 Rounds bars now read as a near-solid slab: heights scale from zero against the window max, so 69–92 only spans ~75–100%. Scaling from the lowest score instead would make the shape read. Not done — Paul hasn't asked.
+- Analytics' "Green Fee - 18 Holes" row vs Settings' new "18 Holes Green Fee".
+- Paul's pasted mockup showed `HI 21` where the app renders `RTD 55`. **Figures in Paul's mockups are dummy text** — read them for layout only. He may revert RTD to HI later; it stands as RTD for now.
+
+---
+
+## Session — 2026-07-26 (cont.) — Widows: pairing rule corrected, back-nine suppositions deleted
+
+Paul, restating the requirement that was never built as asked:
+
+> Most rounds will be 18 holes, but on occasion due to weather, we will quit after playing 9 holes. We might even be on Hole 16 and decide to quit. The standing order is to disregard the back 9 if it is incomplete, but to save the front 9 because it is complete. This 'solo' front 9 is considered as only 'half a round' and flagged as a "Widow". The widow is saved and stored in waiting to pair up with another Widow in order to make a completed round.
+>
+> The initial build paired my Widows with the next 9 holes played, and Start Round took me to Hole 10 — not what I asked for. All rounds start at Hole 1.
+
+### The bug this exposed
+
+`startRound()` was only ever called with `{ startHoleNum: 1, sessionLength: 18 }`, so `half` in `buildNineHoleRecord` was **always `'front'`**. `resolvePendingNine` refused to pair unless the halves were *complementary*. That condition could never be satisfied.
+
+Net effect before this fix: banking a nine wrote it to `pending-nine-holes` — **not** `rounds-history`. It never reached Analytics, never counted toward Rounds Played, and the next widow silently discarded the previous one. The toast promised "play the back 9 later to complete the round," which the app had no way to let you do. Nine holes in, nothing ever out.
+
+### Fixed
+
+- `resolvePendingNine` — pairs whenever a widow is waiting. Half check gone. **Do not reintroduce it**; on a nine-hole course played twice it has no meaning.
+- `pairNineHoleRecords(olderWidow, newerWidow)` — older becomes the front nine, newer the back. **The newer widow's holes are renumbered 10-18.** This matters: `stats.js` detects the double loop with `Math.max(...holeNum) === 18` before folding hole N+9 onto hole N, so a paired round left as 1-9,1-9 would read as a nine-hole course and corrupt Hole Ratings.
+- `buildNineHoleRecord` — `half` removed from the signature and from the stored record.
+
+### Deleted (all unreachable, all downstream of the single `startRound()` call)
+
+`getCompletedNineChunk`'s `startHoleNum === 10` branch; the entire `sessionLength === 9` path in `finishSession`; the Front 9 Score screen's "Case B" standalone-nine rendering and its `isStandaloneNine` plumbing in three places; always-true guards in `goBackFromHole`, the hole-9 interstitial and `startRound`'s parameters. `startRound()` now takes no arguments and still writes `startHoleNum`/`sessionLength` so old and new records share a shape.
+
+**Process note:** a block replacement spanning `finishSession` → `getCompletedNineChunk` silently swallowed `resolveNineAndSave` in between. `node --check` passed — a missing function is a runtime error, not a syntax error. Caught by grepping defined-vs-referenced counts for every touched function; recovered from `git show HEAD:js/app.js`. Do the defined/referenced check after any multi-line block deletion.
+
+### Verified in-browser
+
+Widow #1 banked (no `half` field, `nineScore` 36, history unchanged at 20). Widow #2 → paired: history 21, widow cleared, holes renumbered `1-18`, scores `[4×9, 5×9]`, `front9Score` 36 / `back9Score` 45 / `totalScore` 81, and `tempC`/`windKmh` taken from the older widow as intended. Synthetic round removed afterward; history back to 20.
+
+### Open — needs Paul
+
+**`quitCurrentRound()` has no caller.** It implements the quit-at-16 case exactly as specced — keep holes 1-9, discard the rest — but nothing invokes it. There is no Quit control on any screen and no Quit item in the flyout (Analytics / Play Round / Settings / Call Clubhouse). So today a Widow can only be created by Post Now on the Front 9 Score screen, i.e. at *exactly* hole 9. The "on Hole 16 and decide to quit" case cannot happen.
+
+Adding a Quit control is new UI, so it wasn't built — flagged for Paul instead, given the standing objection to screens appearing that were never asked for.
+
+---
+
+## Session — 2026-07-26 (cont.) — Round Saved screen; the phantom-round bug
+
+### The bug behind "it dumps them back to Hole 1"
+
+`saveFinalRound()` ended in `goToPlayRound()`. By that point `currentRound` had been cleared, so it fell through to `startRound()` — which **wrote a brand-new empty 18-hole round to localStorage** and navigated to Hole 1. The player wasn't returned to Hole 1 of the round they'd just finished; they were dropped into Hole 1 of a phantom round that now existed on disk.
+
+Knock-on: because an empty `currentRound` existed after every save, `boot()`'s mid-flight branch always matched, so the Pass 7 rule that a launch lands on Start Round was effectively unreachable — and every reload dived into a hole screen. Same family as the bookmark issue, different cause.
+
+### Fixed
+
+Save now lands on a terminal `saved` screen. Paul: *"No buttons, no action required. The menu allows exits to other parts of the app, or, the most likely action is to close the app."* His reasoning: one round a day, so the realistic next action is Analytics, ROI, or closing — never a second round. As designer he knows the round saved; a new user had no signal at all.
+
+Audited every caller of `goToPlayRound()` before changing it — `saveFinalRound` (changed), `quitCurrentRound` (no caller, dead), `resolveNineAndSave` (only via that dead path; the live widow path passes `skipNavigate`), and the Start Round button. **A round is now created in exactly one place: the player tapping Start Round.**
+
+`saved` is deliberately NOT in `RESTORABLE_SCREENS` — a confirmation is a moment, not a place to return to. Reloading there has no round to resume, so boot correctly falls to Start Round.
+
+### Deliberately blank
+
+The screen is template + plumbing only; Paul is designing the content. `state.savedSnapshot` captures `{ totalScore, parTotal, playerName, date }` before `currentRound` is cleared, ready for whatever lands there. Direction: a rotating end-card in the spirit of Chuck Lorre's vanity cards — consistent with the quote already on Start Round ("It takes a lot of balls to play this game.").
+
+The widow case needed nothing: widows can only be created by Post Now on the Front 9 screen (quit has no caller), and that path already ends in a buttonless "Round Saved." state with the nine-hole scorecard still visible.
+
+### Verified in-browser
+
+Final Score > Save → `.saved-screen` present, the **only** button in it is `btn-menu`, `currentRound` is `null` (no phantom round), history grew by one. Reload from the saved screen → lands on **Start Round** — the Pass 7 behaviour, reachable for the first time.
+
+### Settled / dropped
+
+- **Quit dropped.** A web app cannot close itself; `window.close()` only works on script-opened windows and is a no-op in an installed PWA. Paul: *"the action doesn't quit the app, so why deal with it."*
+- **Widow creation stays manual.** Paul: the onus is on a player salvaging an unfinished round to tap Back through the holes to the Front 9 Scorecard and hit Post.
+- **Still open:** the inactivity grace period for abandoned in-progress rounds. Flagged against Paul's 30-minute proposal — a stop at the turn, a rain delay, or a slow group ahead all routinely exceed 30 minutes and would destroy a live round. Suggested same-calendar-day, and never auto-discarding a completed 18 sitting on Final Score. Undecided.
+
+---
+
+## Session — 2026-07-26 (cont.) — Stale rounds: the day rule
+
+Two different 30-minute figures had got tangled in conversation. Recording the distinction plainly:
+
+- **`LAST_SCREEN_TTL_MS` (30 min) — built earlier today.** Navigation bookmark only: which screen you return to after a reload. Deletes nothing.
+- **Discarding abandoned rounds — was never built or decided.** Paul proposed 30 minutes; it was pushed back on and then the conversation moved to the Save flow. Until now an abandoned round persisted forever.
+
+### Built: same calendar day
+
+`currentRound.startedOn` ('YYYY-MM-DD', local) is stamped at `startRound()`. `discardStaleRound()` runs at the top of `boot()`, before any branch reads the round, and drops it if that day has passed.
+
+**A day, not a timer** — because 30-minute gaps are normal golf. Mt. Paul is nine holes played twice, so the turn passes the clubhouse; add rain delays and slow groups and a 30-minute inactivity rule would routinely delete rounds that were still being played. A day boundary can't fire mid-round.
+
+Three deliberate exemptions: a complete 18 unsaved on Final Score (the Pass 5 crash-recovery case — losing a whole round to a missed tap would undo it), a Widow in `pending-nine-holes` (saved data waiting to pair, meant to sit for weeks), and rounds with no `startedOn` (nothing to compare — never discard on an assumption).
+
+Local day key, not UTC: a round finished at 9pm on the 26th must not read as the 27th in BC.
+
+### Verified in-browser, four cases
+
+| Case | Result |
+|---|---|
+| Yesterday's abandoned 4-hole round | discarded, landed on Start Round |
+| Waiting Widow alongside it | survived |
+| Today's in-progress round | kept, resumed on Hole 5 |
+| Yesterday's complete-but-unsaved 18 | kept, resumed on Final Score |
+| Legacy round with no `startedOn` | kept |
+
+---
+
+## Session — 2026-07-26 (cont.) — Widow rescue; one time rule, not two
+
+Paul, cutting through several rounds of my own muddle:
+
+> The key here is the USER DECIDES. But in the event of a failure, a system crash, dead battery, mis-swipes, etc. an autosave routine rescues the widow.
+>
+> Agree to delete the 30 minute bookmark completely... Mostly, I don't want to be confused by what the difference is between 30 minutes and a day for whatever it is we're trying to prevent. These are silent operations, the user isn't even aware of it.
+
+### The reframe that resolved it
+
+**Timers never preserve data — they only ever delete it.** Data safety comes from write-before-navigate: every hole hits localStorage the instant Next is tapped. Crash, force-quit, dead battery, accidental close — no recorded hole is ever lost, and no timer is involved. Paul had been trying to map both timers onto data preservation, which is why the distinction stayed slippery. Both timers only ever *throw things away*.
+
+### Deleted: the 30-minute screen bookmark TTL
+
+It was only ever deciding one narrow thing — mid-round, resume the hole or return to Analytics — because the bookmark is consulted *only* inside boot()'s mid-flight branch. With no round in progress, boot lands on Start Round regardless. Not worth a rule Paul couldn't explain. The bookmark is now unconditional. **One time rule in the app, and it's a day.**
+
+### Built: widow rescue
+
+`discardStaleRound()` → `reconcileStaleRound()`. A round from an earlier calendar day with 9+ holes now has its first nine rescued as a Widow rather than being dropped; under 9 holes it's still discarded.
+
+**Why this can't violate "the user decides":** there is no Quit button, so every deliberate exit runs through Post Now or Save, and both clear `currentRound`. A round still sitting there at the day boundary can only mean no decision was ever made. The rescue has nothing to overrule. This is what was miscommunicated earlier — the manual-Post rule governs *decisions*, the rescue governs *failures*.
+
+`startedOn` (day key) became `startedAt` (ISO) so a rescued widow is dated to the day it was played, not the day it was found. Rescue-path toasts are distinct ("Unfinished round recovered — ...") since the user didn't just do anything.
+
+### Verified in-browser
+
+| Case | Result |
+|---|---|
+| Yesterday's crashed round, 13 holes | first 9 rescued as widow, holes 10-13 dropped, dated `2026-07-25`, history unchanged |
+| Second crashed round, widow waiting | paired → history 22, widow cleared, holes 1-18, front 36 / back 45 / total 81 |
+| Yesterday's round, only 6 holes | discarded, **no** widow created |
+| 5-hour-old bookmark, round from today | restored to Analytics — confirms the TTL is gone |
+
+### Screen sleep — clarified, nothing built
+
+Paul asked whether the screen has to stay awake during a round. **No.** The phone locking doesn't close the app, reload it, or lose anything; unlock returns to the same screen with the same half-entered hole. Wake Lock is optional convenience only.
+
+If we do add it: Safari supports it from iOS 16.4, **but it was broken in installed PWAs until Apple fixed it in iOS 18.4** — and this app is installed to the home screen, so that's the version that matters. Needs a secure context, so it can't be tested over the `http://` LAN URL, only on GitHub Pages. Holding the screen on for a four-hour round is a real battery cost, so scope it to hole screens and re-acquire on `visibilitychange`.
+
+---
+
+## Session — 2026-07-26 (cont.) — The 19th Hole: a title sequence
+
+Paul's idea, built over several passes. Save no longer dumps the player into a phantom round — it lands on a terminal screen called **19th Hole** (the clubhouse bar, where a round gets talked about once it's over) that plays a film title sequence and stops.
+
+### The sequence
+
+Dark from arrival — not a fade at the end, which is where it started. Paul: *"a much bolder confirmation if it landed on a black screen."* Going dark at render also deleted a whole class of bug: there used to be a 1.6s background transition mid-sequence, and the first name faded in over cream while the screen was still travelling. With nothing to transition, that can't happen.
+
+1. **ROUND SAVED** — 76px, above the 56px page title
+2. **Executive Producer / Paul de Zeeuw**
+3. **In association with / Mulligan Studios**
+4. **Black beat** (1.4s)
+5. **Starring Dave May · Costarring Pat Morgan · with Special Guest Mike Titley** — one at a time, different positions along a shared horizon
+6. **Credit crawl** — 12 sections, 61 rows, ~31.6s
+7. **One for Jack** card — the QUIET PLEASE sign, then the caption, then fine print
+
+### Things worth not relearning
+
+**Timing is dominoes, not a wound spring.** `slot` is a card's ENTIRE time on the clock, fades included. Treating the shot-list number as a *hold* and adding a fade either side made a "2 sec" card occupy 3.4s and the sequence run 18.6s instead of ~13s.
+
+**Roll speed is px/sec, never a duration.** Duration is derived from content height, so editing credits changes how LONG the roll runs and never how fast it reads. Walked 40 → 95 → 85 on Paul's eye.
+
+**Credits are parked, not launched.** They sit at their start offset (286px from screen top) invisible from render, and fade up in place — no travelling into view from the bottom edge. Walked 160 → 186 → 286; at 160 they sat inside the scroller's top fade mask and the CAST heading arrived washed out. Mask also cut 48px → 28px.
+
+**Name sizes are an OPTICAL match, not a ramp.** Paul: *"it's to make them all look the same size."* Bebas is condensed, so apparent size tracks word width as much as cap height. Measured at a 100px reference: Dave May 297 units, Pat Morgan 379, Mike Titley 369. Pat and Mike are within 3% so an identical 37px genuinely matches them. Dave is 22% narrower; width-matching alone would need 43px and his cap height would tower. 40px splits it. **Re-measure before changing any name.**
+
+**Crew credits are deliberately plain.** Role and name are the same family and size, name in caps. A real end crawl doesn't art-direct itself. Bebas is reserved for the title and intro cards.
+
+**The logo needed a specificity fix.** The wordmark SVG is natively white; Light Mode paints it black via `body:not(.dark-mode) .brand-logo`, which scores (0,2,1). A bare `.saved-screen .brand-logo` is (0,2,0) and quietly loses, leaving it black on black. Repeating the `:not()` takes it to (0,3,1).
+
+### The sign
+
+Paul's reference photo carried a **PGA TOUR logo**. Not reproduced — registered trademark. The plate's own form (vertical QUIET over PLEASE, blue rule inset from a cream field) is generic tournament signage and fine to draw fresh, so it's drawn in CSS rather than dropped in as an image: sharp at any density, uses the app's own type, inner rule is an inset shadow so the corners stay concentric. The badge carries the **Mt. Paul wordmark** instead — clear of anyone else's mark, and the better joke, since this is a Mt. Paul spoof.
+
+Fine print was "A Shuttafuckup Production"; Paul changed it to **"A Shhhaadup Production"** — *"I don't want to disrespect the course since we're borrowing their logo."* Better joke too: it echoes the sign above it instead of fighting it.
+
+### Accessibility
+
+Under `prefers-reduced-motion` the whole sequence is skipped: no cards, no roll, no fade. The credits are simply present and scrollable by hand, and the final card shows immediately. Checked in JS as well as CSS, because `animationend` would otherwise never fire and the screen would sit mid-effect forever.
+
+### Housekeeping
+
+- Temporary **19th Hole menu link** (added so the sequence could be reviewed without playing 18 holes) **removed** before this commit.
+- **Testing card in Settings deliberately KEPT** — Paul wants the 20-round dataset to review Analytics and walk the onboarding before it goes.
+- `sw.js` → **bogey-v9**, `index.html` → **?devcb39**.

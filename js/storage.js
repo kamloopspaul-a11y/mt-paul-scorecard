@@ -14,7 +14,12 @@ export const KEYS = {
   // its place. Remove this key alongside the rest of that testing block
   // (see app.js's generateTestRounds/loadTestData/clearTestData) once
   // Analytics work is done — nothing here is meant to ship.
-  ROUNDS_HISTORY_TEST_BACKUP: 'rounds-history-test-backup'
+  ROUNDS_HISTORY_TEST_BACKUP: 'rounds-history-test-backup',
+  // 2026-07-26 — { screen, at } written on every render, read once at boot to
+  // decide which screen to come back to. Navigation state only; never holds
+  // score/stat data, and losing it costs the user nothing worse than landing
+  // on Start Round. See app.js's readLastScreen()/rememberScreen().
+  LAST_SCREEN: 'last-screen'
 };
 
 export function readJSON(key, fallback = null) {

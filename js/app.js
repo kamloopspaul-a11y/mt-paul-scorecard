@@ -44,13 +44,17 @@ const state = {
   toastMsg: null,
   toastTimer: null,
   fromSettings: false, // whether Setup screen was opened from Home > Settings (vs first run)
+  settingsReturnTo: null, // screen Settings was opened from, so Save can go back there (see saveSetup)
   menuOpen: false,     // Pass 6 Fix 3: hamburger slide-out menu, available from every topbar
   front9Continue: true, // Pass 6 Fix 6: Front 9 Score screen's Continue/Post Now toggle (Case A only)
   front9Posting: false, // Pass 7: true while the post-save spinner is showing (UI delay only — the
                          // actual write already happened before the spinner started)
   front9Posted: false,  // Pass 7: true once Post Now has completed — swaps toggle/Back/Next for
                          // "Round Saved." and removes them; Menu is the only way forward from there
-  front9Snapshot: null  // Pass 7: { front, totalScore, parTotal, playerName, isStandaloneNine }
+  front9Snapshot: null, // Pass 7: { front, totalScore, parTotal, playerName }
+  savedSnapshot: null   // 2026-07-26: { totalScore, parTotal, playerName, date } captured
+                        // at Save, since currentRound is cleared before the
+                        // Round Saved screen renders. See saveFinalRound().
                          // captured from currentRound right before Post Now clears it, so the
                          // scorecard table can keep rendering through the spinner/saved states
 };
@@ -114,6 +118,11 @@ async function init() {
     console.warn('Service worker registration threw', e);
   }
 
+  // Drop yesterday's abandoned round before any branch below reads it, so a
+  // stale round can't resume or be counted. Never touches a complete 18 or a
+  // pending widow — see reconcileStaleRound().
+  reconcileStaleRound();
+
   if (!state.settings || !state.settings.onboarded) {
     state.screen = 'onboarding';
   } else if (
@@ -153,9 +162,23 @@ async function init() {
     Array.isArray(state.currentRound.holes) &&
     state.currentRound.holes.length < (state.currentRound.sessionLength || 18)
   ) {
-    // Crash/reload resilience: a round was mid-flight in localStorage — resume it.
-    resumeIntoHoleScreen();
-    return;
+    // A round is mid-flight. Where to land depends on what the user was doing
+    // when the app last rendered (2026-07-26) — this branch used to drag you
+    // into a hole screen unconditionally, so reloading from Analytics threw
+    // you out of it. See rememberScreen()/readLastScreen() above.
+    const last = readLastScreen();
+    if (last === 'reports' || last === 'setup' || last === 'startround') {
+      // Was reading stats / changing settings — stay there. The round is
+      // untouched in localStorage and resumes the moment they navigate back.
+      state.screen = last;
+      if (last === 'setup') state.fromSettings = true;
+    } else {
+      // Was on a hole screen, or we have no recent memory (fresh install,
+      // cleared storage, or away longer than the TTL) — resume the round,
+      // which is the safe default and the original behaviour.
+      resumeIntoHoleScreen();
+      return;
+    }
   } else {
     // Pass 7: nothing to resume — a normal launch lands on Start Round, per
     // Paul ("once installed as a PWA, the app, when launched will go to the
@@ -195,21 +218,18 @@ async function fetchWeather() {
   updateWeatherReadout();
 }
 
-// Setup's own format: "Temp: 18°C · Wind: 8 km/h".
-function formatWeatherForSetup() {
-  if (weatherState.tempC == null) return '';
-  return 'Temp: ' + weatherState.tempC + '°C · Wind: ' + weatherState.windKmh + ' km/h';
-}
-
-// Start Round's format: "18°C | 8 km/h".
+// Start Round's format: "18°C | 8 km/h". This is now the ONLY on-screen
+// weather readout — Settings showed a "Temp: 18°C · Wind: 8 km/h" line until
+// 2026-07-26, removed at Paul's request. The fetch and the per-round capture
+// stay: weatherState is still snapshotted into every round record (see
+// buildRoundRecord's tempC/windKmh), and that is the one field that cannot be
+// backfilled after the fact.
 function formatWeatherForStartRound() {
   if (weatherState.tempC == null) return '';
   return weatherState.tempC + '°C | ' + weatherState.windKmh + ' km/h';
 }
 
 function updateWeatherReadout() {
-  const setupEl = document.getElementById('weather-readout');
-  if (setupEl) setupEl.textContent = formatWeatherForSetup();
   const startEl = document.getElementById('start-weather-readout');
   if (startEl) startEl.textContent = formatWeatherForStartRound();
 }
@@ -227,7 +247,14 @@ function startRound({ startHoleNum, sessionLength }) {
   // when the Start Round screen renders; if that failed both stay null.
   const { tempC, windKmh } = weatherState;
   state.currentRound = {
-    tee, playerName, ratingSet, tempC, windKmh, startHoleNum, sessionLength, holes: []
+    tee, playerName, ratingSet, tempC, windKmh, startHoleNum, sessionLength,
+    // When the round was started. Used by reconcileStaleRound() at boot, which
+    // compares CALENDAR DAYS, not elapsed time — the rule is "you don't finish
+    // yesterday's round today", never a countdown. Stored as a full ISO stamp
+    // rather than just the day so a rescued widow can be dated to the day it
+    // was actually played instead of the day it was recovered.
+    startedAt: new Date().toISOString(),
+    holes: []
   };
   writeJSON(KEYS.CURRENT_ROUND, state.currentRound);
   goToHoleScreen();
@@ -235,6 +262,120 @@ function startRound({ startHoleNum, sessionLength }) {
 
 function resumeIntoHoleScreen() {
   goToHoleScreen();
+}
+
+// Local calendar day as 'YYYY-MM-DD'. Deliberately local, not UTC — a round
+// finished at 9pm on the 26th must not read as the 27th to a player in BC.
+function localDayKey(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+
+// ===================== Stale round reconcile (2026-07-26) =====================
+//
+// Runs once at boot. A round left in progress on an EARLIER CALENDAR DAY is
+// finished with, one way or the other:
+//   - 9+ holes recorded -> the first nine is rescued as a Widow.
+//   - fewer than 9      -> nothing complete to keep, discarded.
+//
+// This is a RESCUE, not a policy. Paul: "The key here is the USER DECIDES...
+// but in the event of a failure, a system crash, dead battery, mis-swipes,
+// etc. an autosave routine rescues the widow."
+//
+// It can never override a decision, and that falls out of there being no Quit
+// button: every deliberate exit goes through Post Now (Front 9 Score) or Save
+// (Final Score), and BOTH clear currentRound. So a round still sitting here at
+// the day boundary can only mean no decision was ever made — crash, dead
+// battery, forgotten app. Nothing to overrule.
+//
+// A calendar day, not a timer. Paul first proposed 30 minutes of inactivity,
+// which would routinely destroy live rounds: 30-minute gaps are normal golf —
+// a stop at the turn (Mt. Paul is nine holes played twice, so the turn passes
+// the clubhouse), a rain delay, a slow group ahead. A day boundary cannot fire
+// mid-round.
+//
+// Two things this must NOT touch:
+//   1. A COMPLETE 18 sitting unsaved on Final Score. Every hole is recorded and
+//      only the Save tap is missing — exactly what boot()'s Pass 5 crash-
+//      recovery branch protects. Resumable whenever.
+//   2. A WIDOW already in pending-nine-holes. Saved data waiting to pair, meant
+//      to sit for days or weeks. (Untouched here by construction — this only
+//      ever reads currentRound.)
+//
+// Rounds saved before startedAt existed have no day to compare and are left
+// alone — never discard on an assumption.
+function reconcileStaleRound() {
+  const cr = state.currentRound;
+  if (!cr || !Array.isArray(cr.holes)) return;
+  if (cr.holes.length >= 18) return;   // complete 18 — see note 1 above
+  if (!cr.startedAt) return;           // legacy round, can't prove staleness
+  if (localDayKey(new Date(cr.startedAt)) === localDayKey(new Date())) return;
+
+  const chunk = getCompletedNineChunk(cr);
+  if (chunk) {
+    // Dated to the day it was played, not the day it was found.
+    const nine = buildNineHoleRecord({
+      date: cr.startedAt,
+      playerName: cr.playerName,
+      tee: cr.tee,
+      ratingSet: cr.ratingSet,
+      tempC: cr.tempC,
+      windKmh: cr.windKmh,
+      holes: chunk.holes
+    });
+    // skipNavigate: boot() decides the landing screen, not this. resolveNineAndSave
+    // clears currentRound itself, and pairs with a waiting widow if there is one.
+    resolveNineAndSave(nine, { skipNavigate: true, rescued: true });
+    return;
+  }
+
+  remove(KEYS.CURRENT_ROUND);
+  state.currentRound = null;
+}
+
+// ===================== Last-screen memory (2026-07-26) =====================
+//
+// Why this exists: boot() used to send you to a hole screen on EVERY launch
+// while a round was mid-flight, no matter what you were actually doing. Reload
+// the page from Analytics and you'd be thrown into Hole 5. Paul: "it's a
+// recovery / redundancy measure" — it should cover leaving a hole screen to
+// call the clubhouse or check another app, not every reload from anywhere.
+//
+// So: remember the screen, and come back to it. There is no time limit —
+// there was a 30-minute TTL here until 2026-07-26, removed at Paul's request
+// as an unexplainable rule. It was only ever deciding "mid-round, resume the
+// hole or return to Analytics", because this is consulted ONLY inside the
+// mid-flight branch: with no round in progress, boot() lands on Start Round
+// regardless of what's remembered. Staleness is handled once, by the day rule
+// in reconcileStaleRound() above — a round from a previous day is gone before
+// this is ever reached.
+//
+// Deliberately NOT covered by this: the finalscore/front9score crash-recovery
+// branches in boot(). Those exist to stop a completed-but-unsaved round being
+// silently overwritten by the next Play 18, which is permanent data loss —
+// they must fire regardless of where the user was or how long ago. This is a
+// convenience feature and is allowed to fail; those aren't.
+// Only screens that can rebuild themselves from localStorage alone. Transient
+// review states (finalscore, front9score) are excluded on purpose: they're
+// owned by the crash-recovery branches, and restoring them here could show a
+// review screen for a round that branch has already resolved. 'onboarding' is
+// excluded because the onboarded flag decides that, not history.
+const RESTORABLE_SCREENS = ['hole', 'reports', 'setup', 'startround'];
+
+function rememberScreen(screen) {
+  if (!RESTORABLE_SCREENS.includes(screen)) return;
+  writeJSON(KEYS.LAST_SCREEN, { screen, at: Date.now() });
+}
+
+// Returns the remembered screen name, or null if there isn't one, it's stale,
+// or it's not a screen we're willing to restore. Anything malformed reads as
+// null — this is navigation state, so the safe failure is "fall through to
+// boot()'s normal rules", never a throw.
+function readLastScreen() {
+  const rec = readJSON(KEYS.LAST_SCREEN, null);
+  if (!rec || typeof rec !== 'object') return null;
+  if (!RESTORABLE_SCREENS.includes(rec.screen)) return null;
+  return rec.screen;
 }
 
 // Pass 7: replaces the old standalone "Home" dashboard (Play 18/Play 9,
@@ -306,14 +447,10 @@ function commitHoleAndAdvance() {
   writeJSON(KEYS.CURRENT_ROUND, cr); // <-- write-before-navigate, per spec
   state.draft = null;
 
-  // Pass 6 Fix 6: the front nine (holes 1-9) just completed — show the
-  // Front 9 Score review screen instead of silently continuing. This covers
-  // both an 18-hole session mid-flight (sessionLength 18) and a deliberate
-  // standalone 9-hole session (sessionLength 9), which previously went
-  // straight into Hole 10 or straight into resolveNineAndSave() with no
-  // interstitial. Back-nine sessions (startHoleNum 10) are untouched — they
-  // still fall through to the finishSession()/goToHoleScreen() logic below.
-  if (cr.startHoleNum === 1 && cr.holes.length === 9) {
+  // Pass 6 Fix 6: the first nine just completed — show the Front 9 Score
+  // review screen (Continue / Post Now) instead of silently rolling into
+  // Hole 10.
+  if (cr.holes.length === 9) {
     state.front9Continue = true; // default toggle position — Continue active
     state.front9Posting = false;
     state.front9Posted = false;
@@ -352,7 +489,7 @@ function popPreviousHoleIntoDraft() {
 function goBackFromHole() {
   const d = state.draft;
   const cr = state.currentRound;
-  if (d.holeNum === 10 && cr.startHoleNum === 1) {
+  if (d.holeNum === 10) {
     state.draft = null;
     state.front9Continue = true;
     state.front9Posting = false;
@@ -382,7 +519,6 @@ function finishFrontNineNow(opts = {}) {
     ratingSet: cr.ratingSet,
     tempC: cr.tempC,
     windKmh: cr.windKmh,
-    half: 'front',
     holes: cr.holes
   });
   resolveNineAndSave(nine, opts);
@@ -409,8 +545,7 @@ function postFrontNineNow() {
     front,
     totalScore: front.reduce((s, h) => s + h.score, 0),
     parTotal: front.reduce((s, h) => s + h.par, 0),
-    playerName: cr.playerName,
-    isStandaloneNine: cr.sessionLength === 9
+    playerName: cr.playerName
   };
 
   finishFrontNineNow({ skipNavigate: true }); // real save, happens now
@@ -425,43 +560,35 @@ function postFrontNineNow() {
   }, 2400);
 }
 
-// A session (9 or 18 holes) just reached its target length by natural play
-// (not via Quit).
+// The round reached 18 holes by natural play (not via Quit).
+//
+// Every round is 18 holes starting at Hole 1, so this is unconditional. It
+// used to branch on sessionLength === 9 to run a standalone-nine save path —
+// unreachable, since startRound() only ever creates 18-hole rounds. A nine
+// only ever gets saved as a Widow now, via Quit or the Front 9 Score screen's
+// Post Now, both of which route through finishFrontNineNow().
 function finishSession() {
-  const cr = state.currentRound;
-  if (cr.sessionLength === 18) {
-    // Full 18 in one sitting — go to the Final Score preview/Save screen.
-    state.screen = 'finalscore';
-    render();
-    return;
-  }
-  // sessionLength === 9: this nine is done. Save it as a nine-hole record and
-  // resolve it against any pending widow (pairing logic).
-  const half = cr.startHoleNum === 1 ? 'front' : 'back';
-  const nine = buildNineHoleRecord({
-    date: new Date().toISOString(),
-    playerName: cr.playerName,
-    tee: cr.tee,
-    half,
-    holes: cr.holes
-  });
-  resolveNineAndSave(nine);
+  state.screen = 'finalscore';
+  render();
 }
 
-// Given a just-completed nine-hole record, check for a pending widow and
-// either pair it into a full round (append to rounds-history) or store it as
-// the new pending nine. Always clears currentRound afterward.
+// A Widow was just created. Pair it with a waiting widow into a full round if
+// one exists, otherwise store it as the waiting widow. Always clears
+// currentRound afterward.
 function resolveNineAndSave(justPlayedNine, opts = {}) {
   const pending = readJSON(KEYS.PENDING_NINE, null);
   const { pairedRound, newPendingNine } = resolvePendingNine(pending, justPlayedNine);
   if (pairedRound) {
     appendToArray(KEYS.ROUNDS_HISTORY, pairedRound);
     remove(KEYS.PENDING_NINE);
-    showToast('Round complete — saved to your device (' + pairedRound.totalScore + ')');
+    showToast(opts.rescued
+      ? 'Unfinished round recovered — its front nine paired into a complete round (' + pairedRound.totalScore + ')'
+      : 'Round complete — saved to your device (' + pairedRound.totalScore + ')');
   } else {
     writeJSON(KEYS.PENDING_NINE, newPendingNine);
-    const halfLabel = newPendingNine.half === 'front' ? 'front' : 'back';
-    showToast('Nine holes saved — play the ' + (halfLabel === 'front' ? 'back' : 'front') + ' 9 later to complete the round.');
+    showToast(opts.rescued
+      ? 'Unfinished round recovered — its front nine was saved as a half round.'
+      : 'Nine holes saved — play another nine to complete the round.');
   }
   remove(KEYS.CURRENT_ROUND);
   state.currentRound = null;
@@ -470,17 +597,18 @@ function resolveNineAndSave(justPlayedNine, opts = {}) {
   }
 }
 
-// Which contiguous nine-hole chunk of the current round counts as "complete",
-// for the Quit-with->=9-holes case. Only the first 9 holes of the session are
-// ever considered a completed nine — anything played beyond that without
-// reaching a full 18 is an in-progress fragment with no defined home, and is
-// discarded when quitting (see final report deviations).
+// The Widow chunk: which holes get kept when a round is abandoned part-way.
+//
+// Paul's standing order — save the first nine because it's complete, discard
+// whatever was played after it because it isn't. Quit on Hole 16 and holes
+// 10-15 are dropped; only holes 1-9 are banked. Returns null below nine holes,
+// where there's nothing complete to keep.
+//
+// Previously also had a `startHoleNum === 10` branch for back-nine sessions,
+// which cannot exist — every round starts at Hole 1.
 function getCompletedNineChunk(cr) {
-  if (cr.startHoleNum === 1 && cr.holes.length >= 9) {
-    return { half: 'front', holes: cr.holes.slice(0, 9) };
-  }
-  if (cr.startHoleNum === 10 && cr.holes.length >= 9) {
-    return { half: 'back', holes: cr.holes.slice(0, 9) };
+  if (cr.holes.length >= 9) {
+    return { holes: cr.holes.slice(0, 9) };
   }
   return null;
 }
@@ -525,7 +653,6 @@ function quitCurrentRound() {
     ratingSet: cr.ratingSet,
     tempC: cr.tempC,
     windKmh: cr.windKmh,
-    half: chunk.half,
     holes: chunk.holes
   });
   resolveNineAndSave(nine);
@@ -548,10 +675,32 @@ function saveFinalRound() {
     holes: cr.holes
   });
   appendToArray(KEYS.ROUNDS_HISTORY, record);
+
+  // Snapshot before currentRound goes — the Round Saved screen has to render
+  // after the round is cleared.
+  state.savedSnapshot = {
+    totalScore: record.totalScore,
+    parTotal: cr.holes.reduce((sum, h) => sum + h.par, 0),
+    playerName: cr.playerName,
+    date: record.date
+  };
+
   remove(KEYS.CURRENT_ROUND);
   state.currentRound = null;
-  goToPlayRound();
-  showToast('Saved to your device');
+
+  // Land on the terminal Round Saved screen (2026-07-26, Paul). This used to
+  // call goToPlayRound(), which — with currentRound just cleared — fell
+  // through to startRound() and silently created a BRAND NEW empty 18-hole
+  // round on disk, dropping the player on Hole 1 of a round they never asked
+  // to start. That phantom round also meant currentRound effectively always
+  // existed, so boot()'s mid-flight branch always matched and the Pass 7
+  // "a launch lands on Start Round" rule was unreachable.
+  //
+  // A round is now created in exactly one place: the player tapping Start
+  // Round. Nothing here navigates onward — the menu is the only way out, by
+  // design: "no buttons, no action required".
+  state.screen = 'saved';
+  render();
 }
 
 function discardPendingNine() {
@@ -669,17 +818,38 @@ function saveSetup(values) {
   }
   // Pass 7: first-run Setup -> Save advances to Start Round, per Paul
   // ("Once Setup is completed then Save advances the user to the Start
-  // Round screen"). A mid-game Settings revisit (state.fromSettings, opened
-  // via the menu) keeps the prior behavior of dropping straight back into
-  // play — not explicitly addressed yet, so left as-is rather than guessed.
+  // Round screen").
+  //
+  // A mid-game Settings revisit (state.fromSettings, opened via the menu) now
+  // returns to whichever screen Settings was opened FROM (2026-07-26, Paul).
+  // It used to call goToPlayRound() unconditionally, which meant opening
+  // Settings from the Front 9 Score card and hitting Save dropped you on
+  // Hole 10 — the previous comment here flagged this as "not explicitly
+  // addressed yet, left as-is rather than guessed". This is the answer.
+  //
+  // Falling back to goToPlayRound() when there's no recorded origin preserves
+  // the old behaviour for any path that reaches Save without going through the
+  // menu handler.
   const wasFromSettings = state.fromSettings;
+  const returnTo = state.settingsReturnTo;
   state.fromSettings = false;
-  if (wasFromSettings) {
-    goToPlayRound();
-  } else {
+  state.settingsReturnTo = null;
+  if (!wasFromSettings) {
     state.screen = 'startround';
     render();
+    return;
   }
+  // Review/report screens rebuild themselves from state + localStorage, so
+  // returning is just a screen swap. The front-9 review flags (front9Continue
+  // /Posting/Posted) are untouched in memory across a Settings visit — no
+  // reload happened — so a Continue/Post Now choice made before opening
+  // Settings survives the round trip.
+  if (returnTo === 'front9score' || returnTo === 'finalscore' || returnTo === 'reports' || returnTo === 'startround') {
+    state.screen = returnTo;
+    render();
+    return;
+  }
+  goToPlayRound();
 }
 
 // ===================== Toast =====================
@@ -717,11 +887,17 @@ function render() {
     case 'finalscore': html = renderFinalScore(); break;
     case 'front9score': html = renderFront9Score(); break;
     case 'reports': html = renderReports(); break;
+    case 'saved': html = renderSaved(); break;
     default: html = '<div class="screen"><p>Loading…</p></div>';
   }
   appEl.innerHTML = html + menuOverlayHTML();
   attachHandlers();
   syncNavRowHeight();
+  // Stamp where we are so a reload/relaunch within the TTL comes back here
+  // rather than jumping into the round. Non-restorable screens are ignored by
+  // rememberScreen(), which leaves the previous stamp in place — deliberate,
+  // so passing through a review screen doesn't erase where you actually were.
+  rememberScreen(state.screen);
 }
 
 // The photo above the nav row must clear it by exactly the 2px .hole-photo
@@ -955,13 +1131,11 @@ function renderSetup() {
   const lightOn = s.lightMode !== false; // default true (Light Mode), per settings-record.js
   const membershipFeeVal = formatFeeForInput(s.membershipFee);
   const greenFeeVal = formatFeeForInput(s.greenFee);
-  const weatherText = formatWeatherForSetup();
 
   return `
     <div class="screen">
       ${topbarHTML()}
-      <h1 style="margin-bottom:6px;">Settings</h1>
-      <div class="weather-readout" id="weather-readout">${weatherText}</div>
+      <h1 style="margin-bottom:20px;">Settings</h1>
       <div class="card">
         <div class="field">
           <label for="input-name">Name</label>
@@ -995,15 +1169,14 @@ function renderSetup() {
           </div>
           <span class="toggle-label ${!statsOn ? '' : 'dim'}">Hide Stats</span>
         </div>
-        <div class="field" style="margin-top:8px;">
+        <div class="field field-inline" style="margin-top:8px;">
           <label for="input-membership-fee">Membership Fee</label>
           <input type="text" inputmode="decimal" id="input-membership-fee" value="${escapeAttr(membershipFeeVal)}" placeholder="$1,450" />
-          <p class="field-help">Used to calculate your break-even point and savings in Analytics.</p>
         </div>
-        <div class="field" style="margin-bottom:6px;">
-          <label for="input-green-fee">Green Fees</label>
+        <div class="field field-inline" style="margin-bottom:6px;">
+          <label for="input-green-fee">18 Holes Green Fee</label>
           <input type="text" inputmode="decimal" id="input-green-fee" value="${escapeAttr(greenFeeVal)}" placeholder="$45" />
-          <p class="field-help">Per-round rate for 18 holes, used as the non-member comparison in Analytics.</p>
+          <p class="field-help">Used to calculate your break-even point and savings in Analytics.</p>
         </div>
         <div class="export-row">
           <div class="export-row-text">
@@ -1017,12 +1190,12 @@ function renderSetup() {
           </button>
         </div>
       </div>
-      <div class="card" style="border:1px dashed var(--ink-muted); margin-top:12px;">
+      <div class="card" style="border:1px dashed var(--ink-muted); padding:18px; margin-top:12px;">
         <span class="toggle-label dim" style="display:block; margin-bottom:10px;">Testing (temporary)</span>
         <p class="field-help" style="margin-top:0;">Loads a random 20-round dataset into Analytics for testing. Your real round history (if any) is backed up and restored by Clear — remove this card once we're done.</p>
         <div class="btn-row" style="margin-top:10px;">
-          <button class="btn small secondary" id="btn-load-test-data">Load Test Data</button>
-          <button class="btn small secondary" id="btn-clear-test-data">Clear Test Data</button>
+          <button class="btn small" id="btn-load-test-data">Load Test Data</button>
+          <button class="btn small" id="btn-clear-test-data">Clear Test Data</button>
         </div>
       </div>
       <div style="margin-top:auto;">
@@ -1253,21 +1426,365 @@ function renderFinalScore() {
   `;
 }
 
+// Credits for the 19th Hole roll (Paul, 2026-07-26). Data, not markup, so the
+// copy can be edited without touching layout.
+//
+// Each row is [left, right]. The two columns meet in the middle and justify
+// TOWARDS each other — left column right-aligned, right column left-aligned,
+// 20px between them. For Cast that reads "who | what"; for crew sections it
+// reads "job | who", which is the usual film-credit order.
+const CREDIT_SECTIONS = [
+  { title: 'Cast', rows: [
+    ['Dave May', 'Himself'],
+    ['Pat Morgan', 'Himself'],
+    ['Rick Kirkwood', 'Himself'],
+    ['Jack McGuire', 'Himself'],
+    ['Ray Johnson', 'Extra'],
+    ['Gary Bailey', 'Extra'],
+    ['Rob Denier', 'Extra'],
+    ['Danny Latin', 'PGA Pro'],
+    ['Donna Diner', 'Mt. Paul Catering'],
+    ['Nancy Kitchen', 'Mt. Paul Catering'],
+    ['Fiona &amp; Melissa', 'Servers'],
+    ['Brian Proshop', 'Pro Shop Manager'],
+    ['Randy', 'Assistant II'],
+    ['Brett Emsland', 'PGA'],
+    ['Poker Players', 'Merv, Kenny, Mike &amp; the Gang']
+  ]},
+  { title: 'Directed By', rows: [
+    ['Directed By', 'Divot Reilly'],
+    ['Written By', 'Par Shooter &amp; Bo Gie'],
+    ['Produced By', 'Mt. Paul Golf Course']
+  ]},
+  { title: 'Production', rows: [
+    ['Executive Producer', 'Sandy Trapp'],
+    ['Director of Photography', 'Fair Weis'],
+    ['1st Unit Cinematography', 'Chip Shott'],
+    ['2nd Unit Cinematography', 'Rusty Wedge'],
+    ['Camera Operator', 'Lou Feaux'],
+    ['Steadicam Operator', 'Green Reider'],
+    ['Focus Puller', 'Rae Kaffe']
+  ]},
+  { title: 'Electrical &amp; Grip', rows: [
+    ['Gaffer', 'Sparky McTee'],
+    ['Best Boy Electric', 'Flint Iron'],
+    ['Key Grip', 'Trap Barrows'],
+    ['Dolly Grip', 'Cartway Jenkins']
+  ]},
+  { title: 'Art Department', rows: [
+    ['Production Designer', 'Fairway Foster'],
+    ['Art Director', 'Bunker Hill'],
+    ['Set Decorator', 'Divot Lawns'],
+    ['Costume Designer', 'Plaid Weathers'],
+    ['Hair &amp; Makeup', 'Betty Birdie']
+  ]},
+  { title: 'Assistant Directors', rows: [
+    ['1st AD', 'Marker Downes'],
+    ['2nd AD', 'Yardage Booke'],
+    ['Script Supervisor', 'Handi Capp']
+  ]},
+  { title: 'Stunts', rows: [
+    ['Stunt Coordinator', 'Slice Malone'],
+    ['Stunt Doubles', 'The Shank Brothers'],
+    ['Ball Retrieval Unit', 'The Water Hazard Divers'],
+    ['Caddy Wrangler', 'Fore! Jenkins'],
+    ['Sound Mixer', 'Wesley Whiffle'],
+    ['Boom Operator', 'Rough Rider Nolan']
+  ]},
+  { title: 'Sound', rows: [
+    ['Foley Artist', 'Clint Clubface'],
+    ['Sound Effects &mdash; Ball Strike', 'Fresh Cut Fairway Studios']
+  ]},
+  { title: 'Music &amp; Post', rows: [
+    ['Music By', 'The Birdie Orchestra'],
+    ['Original Score', '&ldquo;Ballad of the 19th Hole&rdquo;'],
+    ['Editor', 'Trim N. Green'],
+    ['Colorist', 'Ivy Fairgreen'],
+    ['Visual Effects', 'Mulligan Digital'],
+    ['Greenskeeping Consultant', 'Sod Off Studios'],
+    ['Catering', 'The Clubhouse Kitchen'],
+    ['Legal Counsel', 'Rule 14-1 LLP']
+  ]},
+  { title: 'Location', rows: [
+    ['Filmed On Location', 'Mt. Paul Golf Course<br>Front &amp; Back 9'],
+    ['Cameras By', 'Titleist Vision Optics']
+  ]},
+  { title: 'Technical Credits', rows: [
+    ['Sound By', 'Fairbank Dolby Green'],
+    ['Color By', 'Augusta Technicolor'],
+    ['Filmed In', 'Bogeyvision'],
+    ['Certified', '18-Hole Regulation Runtime'],
+    ['No Divots Were Harmed', 'In The Making Of This Round'],
+    ['A Widow Nine Production', 'Paired In Post']
+  ]}
+];
+
+function creditsHTML(year) {
+  const sections = CREDIT_SECTIONS.map((sec) => {
+    const rows = sec.rows.map(([l, r]) =>
+      `<div class="credit-row"><div class="credit-l">${l}</div><div class="credit-r">${r}</div></div>`
+    ).join('');
+    return `<section class="credit-section">
+        <h2 class="credit-section-title">${sec.title}</h2>
+        ${rows}
+      </section>`;
+  }).join('');
+
+  // Closing card — centred, full width, no columns. The last thing on screen
+  // before the fade.
+  const closing = `<section class="credit-section credit-closing">
+      <p>This Round Is A Work Of Fiction</p>
+      <p>Any Resemblance To An Actual Good Score<br>Is Purely Coincidental</p>
+      <p class="credit-marks">DTS &middot; SDDS &middot; THX</p>
+      <p class="credit-copy">Mt. Paul Golf Course &copy; ${year}</p>
+    </section>`;
+
+  return sections + closing;
+}
+
+// The last beat: a title card a second after the crawl clears (Paul,
+// 2026-07-26). Drawn in HTML/CSS rather than dropped in as an image so it
+// stays crisp at any density and picks up the app's own typefaces — "cleaner,
+// like an illustration".
+//
+// The reference photo Paul supplied carried a PGA TOUR logo on the badge. That
+// is a registered trademark and is NOT reproduced here; the sign's own form (a
+// vertical QUIET over PLEASE on a bordered plate) is generic tournament
+// signage and fine to draw fresh. The badge slot carries the Mt. Paul wordmark
+// instead, which is both clear of anyone else's mark and a better joke — this
+// is a Mt. Paul spoof, not a PGA one.
+function finalCardHTML() {
+  return `
+    <div class="final-card" hidden>
+      <div class="quiet-sign">
+        <div class="quiet-sign-plate">
+          <div class="quiet-stack">
+            <span>Q</span><span>U</span><span>I</span><span>E</span><span>T</span>
+          </div>
+          <div class="quiet-please">Please</div>
+          <img class="quiet-badge" src="assets/Logos/mt_paul_logo_vector.svg" alt="" />
+        </div>
+      </div>
+      <div class="final-line">One for Jack</div>
+      <div class="final-fineprint">A Shhhaadup Production</div>
+    </div>
+  `;
+}
+
+// Credit roll speed, pixels per second. Paul wants film-credit pace — "a
+// little too fast to catch it all in one go", the Chuck Lorre vanity-card
+// joke. Walked 40 -> 95 -> 85 (2026-07-26): 40 put the roll at 92 seconds,
+// which Paul read as waiting; 95 overshot into too-quick. Tune HERE, not by
+// setting a duration: duration is derived from content
+// height at this speed, so adding or cutting credits changes how LONG the roll
+// runs and never how fast it reads. A fixed duration would silently accelerate
+// the roll every time copy was added.
+const CREDIT_ROLL_PX_PER_SEC = 85;
+
+// Paul's shot list (2026-07-26). `slot` is the card's ENTIRE time on the
+// clock, fades included — dominoes ticking the clock down, not fades stacked
+// on top of a hold. Corrected 2026-07-26: treating the shot-list number as the
+// hold and adding a fade either side made a "2 sec" card occupy 3.4s and the
+// whole sequence run 18.6s instead of the ~13s the list actually describes.
+//
+// Within a slot: fade in over `fade`, hold, fade out over `fade`. Requires
+// slot >= 2 * fade, which every card below satisfies.
+const INTRO_CARDS = [
+  { cls: 'intro-hero', slot: 2000, fade: 500,
+    html: 'Round Saved' },
+  { cls: 'intro-line', slot: 1500, fade: 300,
+    html: '<span class="intro-sub">Executive Producer</span>Paul de Zeeuw' },
+  { cls: 'intro-line', slot: 1500, fade: 300,
+    html: '<span class="intro-sub">In association with</span><span class="intro-big">Mulligan Studios</span>' }
+];
+
+// Three names, one at a time, each in a different spot along roughly the same
+// horizon and each larger than the last — the first is 20% smaller than the
+// third (34px / 38px / 43px), per the shot list.
+const INTRO_NAMES = [
+  { label: 'Starring',           name: 'Dave May',    pos: 'pos-a' },
+  { label: 'Costarring',         name: 'Pat Morgan',  pos: 'pos-b' },
+  { label: 'with Special Guest', name: 'Mike Titley', pos: 'pos-c' }
+];
+
+// The held beat on black between the studio cards and the first name. Was
+// also covering a 1.6s background transition until the screen became dark from
+// arrival; now it's purely a pause, so it can be tuned freely on feel.
+const BLACK_SCREEN_MS = 1400;
+
+// Beat of empty black between the crawl clearing and the last card.
+const FINAL_CARD_DELAY_MS = 1000;
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Plays one card inside a fixed slot: fade in, hold, fade out, gone — total
+// elapsed is exactly `slot`, so the sequence's running time is the sum of the
+// slots and nothing else.
+async function playCard(stage, cls, html, slot, fade) {
+  const el = document.createElement('div');
+  el.className = 'intro-card ' + cls;
+  el.style.setProperty('--fade', fade + 'ms');
+  el.innerHTML = html;
+  stage.appendChild(el);
+  // Force a frame so the transition has a start value to animate FROM —
+  // without this the element is inserted already-visible and never dissolves.
+  void el.offsetWidth;
+  el.classList.add('visible');
+  // Fade-out must START at slot-minus-fade so it FINISHES on the slot boundary.
+  await wait(Math.max(fade, slot - fade));
+  el.classList.remove('visible');
+  await wait(fade);
+  el.remove();
+}
+
+// The whole Round Saved sequence: confirmation, studio cards, cut to black,
+// three names, then the credit roll. Called once from attachHandlers().
+async function playSavedSequence() {
+  const stage = document.querySelector('.saved-stage');
+  const scroller = document.querySelector('.saved-scroll');
+  const credits = document.querySelector('.saved-credits');
+  if (!stage || !scroller || !credits) return;
+
+  // Motion sensitivity: skip the whole sequence. No cards, no roll, no fade —
+  // the credits are simply there, scrollable by hand. Checked in JS as well as
+  // CSS because animationend would otherwise never fire and the screen would
+  // sit mid-effect forever.
+  const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced) {
+    scroller.hidden = false;
+    credits.classList.add('lit');
+    const card = document.querySelector('.final-card');
+    if (card) { card.hidden = false; card.classList.add('visible'); }
+    return;
+  }
+
+  // Park the credits at their start offset now, invisible, so the roll has
+  // nothing to travel before it's readable. See CREDIT_START_FROM_TOP_PX.
+  parkCredits(scroller, credits);
+
+  for (const card of INTRO_CARDS) {
+    await playCard(stage, card.cls, card.html, card.slot, card.fade);
+  }
+
+  // BLACK SCREEN. Now just a held beat — the screen has been dark since it
+  // rendered (see .saved-screen in the CSS), so there's nothing to transition.
+  // This is the pause between the studio cards and the first name.
+  await wait(BLACK_SCREEN_MS);
+
+  for (const n of INTRO_NAMES) {
+    const html = '<span class="intro-name-label">' + n.label + '</span>' + n.name;
+    await playCard(stage, 'intro-name ' + n.pos, html, 1500, 300);
+  }
+
+  startCreditRoll(scroller, credits);
+}
+
+// Where the first credit waits, measured from the TOP OF THE SCREEN. Converted
+// to an offset inside the scroller, which starts lower down the page than the
+// viewport does. Walked out from 160 -> 186 -> 286 (2026-07-26) on Paul's eye:
+// 160 parked the credits inside the scroller's top fade mask so the CAST
+// heading arrived washed out; 286 sits well clear of it and gives the roll a
+// beat of black under the title before the first credit.
+const CREDIT_START_FROM_TOP_PX = 286;
+
+// Positions the credits at their start offset and leaves them invisible. Runs
+// before the intro cards so the layer is already in place, frozen, while the
+// studio cards and the three names play over it.
+function parkCredits(scroller, credits) {
+  scroller.hidden = false;
+  const scrollerTop = scroller.getBoundingClientRect().top;
+  const startPx = Math.max(0, Math.round(CREDIT_START_FROM_TOP_PX - scrollerTop));
+  credits.style.setProperty('--roll-from', startPx + 'px');
+  credits.style.setProperty('--roll-to', '-' + credits.scrollHeight + 'px');
+  // Inline transform holds the parked position. A running CSS animation
+  // outranks inline styles in the cascade, so .rolling takes over cleanly
+  // from here with no jump.
+  credits.style.transform = 'translateY(' + startPx + 'px)';
+  return startPx;
+}
+
+// One pass, then gone. Duration is derived from content height at a CONSTANT
+// pixels-per-second, so editing the credits changes how LONG the roll runs and
+// never how fast it reads. A fixed duration would silently accelerate the roll
+// every time a line was added.
+function startCreditRoll(scroller, credits) {
+  const startPx = parkCredits(scroller, credits); // idempotent; also re-measures
+  const travel = startPx + credits.scrollHeight;
+  credits.style.setProperty('--roll-duration', (travel / CREDIT_ROLL_PX_PER_SEC) + 's');
+  credits.classList.add('lit'); // fade up from black as the roll begins
+  credits.addEventListener('animationend', () => {
+    // Roll's done and off the top.
+    scroller.hidden = true;
+    // A beat of empty black, then the last card. The pause is the joke's
+    // timing — arriving straight off the crawl would read as another credit.
+    setTimeout(() => {
+      const card = document.querySelector('.final-card');
+      if (!card) return;
+      card.hidden = false;
+      void card.offsetWidth; // force a frame so the fade has a start value
+      card.classList.add('visible');
+    }, FINAL_CARD_DELAY_MS);
+  }, { once: true });
+  credits.classList.add('rolling');
+}
+
+// ===================== Screen: Round Saved (2026-07-26) =====================
+//
+// Terminal screen. Reached only from Final Score > Save, and deliberately has
+// NO buttons and no onward navigation — per Paul: "No buttons, no action
+// required. The menu allows exits to other parts of the app, or, the most
+// likely action is to close the app."
+//
+// Why it exists: Save used to drop the player straight onto Hole 1 of a fresh
+// round, which read as a grey area rather than a confirmation. Paul plays one
+// round a day; the realistic next action is Analytics, Membership ROI, or
+// closing the app — never starting a second round. A new user had no signal at
+// all that their round had been stored.
+//
+// Not added to RESTORABLE_SCREENS (see readLastScreen) on purpose: reloading
+// here has no round to resume, so boot() correctly falls through to Start
+// Round. A confirmation is a moment, not a place to come back to.
+//
+// The widow equivalent already exists and is NOT routed here — the Front 9
+// Score screen's own "Round Saved." posted state keeps the nine-hole scorecard
+// on screen behind the confirmation, which is more informative than a blank
+// card would be. See postFrontNineNow().
+//
+// Titled "19th Hole" (Paul, 2026-07-26) — the clubhouse bar, where a round
+// gets talked about after it's over. Content below the title is still open;
+// state.savedSnapshot holds { totalScore, parTotal, playerName, date } ready
+// for whatever lands there.
+function renderSaved() {
+  // state.savedSnapshot ({ totalScore, parTotal, playerName, date }) is captured
+  // at Save and available here if the credits ever want the round's own figures.
+  const snap = state.savedSnapshot;
+  const creditYear = new Date(snap ? snap.date : Date.now()).getFullYear();
+
+  return `
+    <div class="screen saved-screen">
+      ${topbarHTML()}
+      <h1 class="saved-title">19th Hole</h1>
+      <div class="saved-stage">
+        <div class="saved-scroll" hidden>
+          <div class="saved-credits">${creditsHTML(creditYear)}</div>
+        </div>
+        ${finalCardHTML()}
+      </div>
+    </div>
+  `;
+}
+
 // ===================== Screen: Front 9 Score (Pass 6 Fix 6, Pass 7 Post Now) =====================
 //
-// Shown after Hole 9 completes, in BOTH an 18-hole session mid-flight and a
-// deliberate standalone 9-hole session — see commitHoleAndAdvance() for the
-// routing. Two cases, distinguished by cr.sessionLength:
-//   Case A (sessionLength === 18): a real Continue/Post Now toggle. Continue
-//     advances into Hole 10; Post Now runs the same save-as-widow flow a
-//     mid-round quit already uses (half: 'front'). ("Quit" was renamed to
-//     "Post Now" in Pass 7 — saving is the primary action here, not
-//     abandoning anything.)
-//   Case B (sessionLength === 9): a deliberate standalone nine has nothing to
-//     "continue" to, so no toggle is shown — Next is relabeled "Post Now" and
-//     always runs the save flow (this is exactly today's finishSession()
-//     behavior for a 9-hole session, just shown as a reviewable scorecard
-//     first instead of happening silently).
+// Shown after Hole 9 completes — see commitHoleAndAdvance() for the routing.
+// A Continue/Post Now toggle: Continue advances into Hole 10; Post Now banks
+// these nine as a Widow, the same flow a mid-round Quit uses. ("Quit" was
+// renamed to "Post Now" in Pass 7 — saving is the primary action here, not
+// abandoning anything.)
+//
+// There was a second case here (Case B, sessionLength === 9) for a deliberate
+// standalone nine, which had no toggle and always posted. Unreachable —
+// startRound() only ever creates 18-hole rounds — and removed 2026-07-26.
 // Back (either case) pops Hole 9 back into the draft for editing — the
 // Hole-10-only Back exception lives in goBackFromHole(), not here. Back is
 // only available before Post Now is tapped; see the posting/posted states
@@ -1287,20 +1804,19 @@ function renderFinalScore() {
 // on screen through those two states.
 function renderFront9Score() {
   const cr = state.currentRound;
-  let front, totalScore, parTotal, playerName, isStandaloneNine;
+  let front, totalScore, parTotal, playerName;
 
   if (cr) {
     front = cr.holes.slice(0, 9); // exactly the 9 just-committed entries
     totalScore = front.reduce((s, h) => s + h.score, 0);
     parTotal = front.reduce((s, h) => s + h.par, 0);
     playerName = cr.playerName;
-    isStandaloneNine = cr.sessionLength === 9;
   } else if (state.front9Snapshot) {
-    ({ front, totalScore, parTotal, playerName, isStandaloneNine } = state.front9Snapshot);
+    ({ front, totalScore, parTotal, playerName } = state.front9Snapshot);
   } else {
     // Defensive fallback — shouldn't happen (posting/posted always follow a
     // snapshot capture in postFrontNineNow()).
-    front = []; totalScore = 0; parTotal = 0; playerName = ''; isStandaloneNine = false;
+    front = []; totalScore = 0; parTotal = 0; playerName = '';
   }
 
   const holeRowCells = front.map((h) => `<th>${h.holeNum}</th>`).join('');
@@ -1320,10 +1836,6 @@ function renderFront9Score() {
     actionAreaHTML = `<div class="row-toggle post-status" style="border-bottom:none; justify-content:center;">
         <span class="post-confirm">Round Saved.</span>
       </div>`;
-  } else if (isStandaloneNine) {
-    actionAreaHTML = `<div class="row-toggle" style="border-bottom:none; justify-content:center;">
-        <span class="toggle-label">Post Now</span>
-      </div>`;
   } else {
     actionAreaHTML = `<div class="row-toggle" style="border-bottom:none; justify-content:center; gap:14px;">
         <span class="toggle-label ${continueOn ? '' : 'dim'}">Continue</span>
@@ -1337,7 +1849,7 @@ function renderFront9Score() {
   const navRowHTML = (posting || posted) ? '' : `
       <div class="btn-row nav-row">
         <button class="btn" id="btn-front9-back">Back</button>
-        <button class="btn" id="btn-front9-next">${isStandaloneNine ? 'Post Now' : (continueOn ? 'Next' : 'Post Now')}</button>
+        <button class="btn" id="btn-front9-next">${continueOn ? 'Next' : 'Post Now'}</button>
       </div>`;
 
   return `
@@ -1396,7 +1908,7 @@ function renderReports() {
       <div class="report-date">${asOfDate}</div>
       ${body}
       <div style="margin-top:24px;">
-        <button class="btn secondary" id="btn-reports-home">Home</button>
+        <button class="btn" id="btn-reports-home">Home</button>
       </div>
     </div>
   `;
@@ -1510,7 +2022,7 @@ function weeklySectionHTML(weekly, newSlotIndex) {
     }).join('');
     return `
       <div class="report-section">
-        <h2 class="report-heading">${WEEKLY_METRIC_LABELS[key]} Each Week</h2>
+        <h2 class="report-heading">${WEEKLY_METRIC_LABELS[key]}: Weekly Report</h2>
         <div class="bar-row thick">${bars}</div>
       </div>`;
   }).join('');
@@ -1568,7 +2080,9 @@ function todaysStatsHTML(t, roundsToDate) {
 // Bars are proportional to the highest score in the window, so they sit at
 // similar heights by design: ten rounds inside a few strokes of each other
 // SHOULD look level. The numbers above carry the detail; the bars carry the
-// shape. Scrollable, since ten slabs won't fit a phone width.
+// shape. All ten fit on screen at once (.bar-row.thick.fit) — this was a
+// horizontal scroller until 2026-07-26, which hid the most recent rounds off
+// the right edge.
 function lastTenHTML(lastTen) {
   const max = Math.max(1, ...lastTen.map((r) => r.totalScore));
   const bars = lastTen.map((r) => `
@@ -1579,7 +2093,7 @@ function lastTenHTML(lastTen) {
   return `
     <div class="report-section">
       <h2 class="report-heading">Last 10 Rounds</h2>
-      <div class="bar-row thick scroll">${bars}</div>
+      <div class="bar-row thick fit">${bars}</div>
       <p class="report-note">Last 10 rounds, most recent on the right.</p>
     </div>`;
 }
@@ -1766,7 +2280,7 @@ function reportsFullHTML(a) {
     ? weeklySectionHTML(a.weekly, a.weeklyNewSlotIndex)
     : ['Birdies', 'Pars', 'Bogeys', 'Bogey+'].map((label) => `
     <div class="report-section">
-      <h2 class="report-heading">${label} Each Week</h2>
+      <h2 class="report-heading">${label}: Weekly Report</h2>
       <p class="section-empty">Play one more round (2 total) to unlock weekly trends.</p>
     </div>`).join('');
 
@@ -1890,8 +2404,9 @@ function attachHandlers() {
           });
         });
       }
-      // Fire-and-forget: updates #weather-readout in place once it resolves,
-      // no-ops silently on failure (see fetchWeather()'s try/catch above).
+      // Settings no longer shows a weather readout, but the fetch still runs
+      // here so weatherState is warm if the user goes straight from Settings
+      // into a round — the snapshot taken at tee-off can't be backfilled.
       fetchWeather();
       break;
     }
@@ -1957,12 +2472,13 @@ function attachHandlers() {
       if (saveBtn) saveBtn.addEventListener('click', () => saveFinalRound());
       break;
     }
+    case 'saved': {
+      // Deliberately no other handlers — the screen has no controls. The ⋮ menu
+      // is wired unconditionally by attachMenuHandlers().
+      playSavedSequence();
+      break;
+    }
     case 'front9score': {
-      const cr = state.currentRound;
-      // cr is null once posting/posted (currentRound already cleared) — those
-      // states render with no toggle/Back/Next in the DOM anyway, so the
-      // isStandaloneNine lookup below only needs to succeed while cr exists.
-      const isStandaloneNine = cr ? cr.sessionLength === 9 : false;
       const toggle = document.getElementById('toggle-front9');
       const backBtn = document.getElementById('btn-front9-back');
       const nextBtn = document.getElementById('btn-front9-next');
@@ -1976,14 +2492,12 @@ function attachHandlers() {
       if (backBtn) backBtn.addEventListener('click', () => popPreviousHoleIntoDraft());
       if (nextBtn) {
         nextBtn.addEventListener('click', () => {
-          if (isStandaloneNine) {
-            // Case B: standalone 9-hole session — always the save flow.
-            postFrontNineNow();
-          } else if (state.front9Continue !== false) {
-            // Case A, Continue: advance into Hole 10.
+          if (state.front9Continue !== false) {
+            // Continue: advance into Hole 10.
             goToHoleScreen();
           } else {
-            // Case A, Post Now: save this front nine as a widow/paired round.
+            // Post Now: bank this first nine as a Widow (pairs with a waiting
+            // widow into a full round, if there is one).
             postFrontNineNow();
           }
         });
@@ -2040,7 +2554,20 @@ function attachMenuHandlers() {
   if (closeBtn) closeBtn.addEventListener('click', closeMenu);
   if (itemAnalytics) itemAnalytics.addEventListener('click', () => { state.menuOpen = false; state.screen = 'reports'; render(); });
   if (itemPlay) itemPlay.addEventListener('click', () => { state.menuOpen = false; state.screen = 'startround'; render(); });
-  if (itemSettings) itemSettings.addEventListener('click', () => { state.menuOpen = false; state.fromSettings = true; state.screen = 'setup'; render(); });
+  if (itemSettings) itemSettings.addEventListener('click', () => {
+    state.menuOpen = false;
+    state.fromSettings = true;
+    // Remember where Settings was opened FROM so Save can return there
+    // (2026-07-26). Without this, Save always dove into a hole screen — open
+    // Settings from the Front 9 Score card and Save landed you on Hole 10.
+    // Not the same thing as the `last-screen` key: that one gets overwritten
+    // with 'setup' the moment this screen renders, so it can't answer "where
+    // did I come from". In-memory only, which is correct — a reload from
+    // Settings is boot()'s problem, and it already handles it.
+    state.settingsReturnTo = state.screen;
+    state.screen = 'setup';
+    render();
+  });
 
   // Call Clubhouse is a real <a href="tel:"> — the OS handles dialling, so no
   // preventDefault and no navigation of our own. The menu is closed on a

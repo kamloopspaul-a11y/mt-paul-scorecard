@@ -80,8 +80,14 @@ export const EXAMPLE_ROUND_RECORD = {
 // Quitting after at least 9 holes are recorded saves those 9 holes as a pending
 // nine-hole record (below) rather than discarding them. Quitting before 9 holes
 // are complete discards `currentRound` entirely — there is nothing valid to save.
-export function buildNineHoleRecord({ date, playerName, tee, ratingSet, tempC, windKmh, half, holes }) {
-  // half: 'front' | 'back' — which 9 this is, so pairing knows the hole order.
+// Builds a "Widow" — the completed first nine of a round abandoned before 18
+// (2026-07-26, Paul's spec).
+//
+// There is no `half` any more. Every round in this app starts at Hole 1, so
+// every widow IS a first nine and there is no such thing as a back-nine
+// session. `half: 'front' | 'back'` was a supposition from the initial port,
+// and it silently broke pairing outright — see resolvePendingNine below.
+export function buildNineHoleRecord({ date, playerName, tee, ratingSet, tempC, windKmh, holes }) {
   const sum = (arr, key) => arr.reduce((s, h) => s + (h[key] || 0), 0);
   return {
     date, playerName, tee,
@@ -100,51 +106,53 @@ export function buildNineHoleRecord({ date, playerName, tee, ratingSet, tempC, w
     // down) — never 0, which is a real temperature and a real wind speed.
     tempC: typeof tempC === 'number' ? tempC : null,     // degrees Celsius
     windKmh: typeof windKmh === 'number' ? windKmh : null, // km/h // carried so a paired round keeps it
-    half, holes, nineScore: sum(holes, 'score')
+    holes, nineScore: sum(holes, 'score')
   };
 }
 
-// Pairs a completed front-9 and back-9 nine-hole record into one full 18-hole
-// round via buildRoundRecord — order is always front-then-back regardless of
-// which half was played/recorded first. Call this when a new 9 is finished and
-// a pending nine-hole record already exists in storage; the resulting round is
-// what gets appended to rounds-history, and the consumed pending nine should be
-// cleared. If no pending nine exists when a 9 finishes, save it as pending
-// instead (see Quit behavior above) — do not invent a fake opposite half.
-export function pairNineHoleRecords(nineA, nineB) {
-  const front = nineA.half === 'front' ? nineA : nineB;
-  const back = nineA.half === 'back' ? nineA : nineB;
-  // front.date and back.date are both preserved on the paired result's holes
-  // metadata is not — only useful for debugging/audit (e.g. showing "front 9
-  // played Jul 1, back 9 completed Jul 3"). Not used to gate pairing: same-day
-  // front+back is still a legitimate pairing, not just cross-day widows.
+// Pairs two Widows into one full 18-hole round (2026-07-26, Paul's spec).
+//
+// Mt. Paul is a nine-hole course played twice, so two first nines are the same
+// physical nine holes played on two occasions — combining them into an 18 is
+// legitimate here in a way it would not be on an eighteen-hole course.
+//
+// Order is by when they were played: the older widow becomes the front nine,
+// the newer one the back nine. The newer widow's holes are RENUMBERED 10-18.
+// That matters — a naturally played 18 stores holeNum 1-18, and stats.js
+// detects the double loop with `Math.max(...holeNum) === 18` before folding
+// hole N+9 onto hole N (see its isDoubleLoop). Leaving a paired round as
+// 1-9,1-9 would make it read as a nine-hole course and corrupt Hole Ratings.
+export function pairNineHoleRecords(olderWidow, newerWidow) {
+  const back = newerWidow.holes.map((h, i) => ({ ...h, holeNum: i + 10 }));
   return buildRoundRecord({
-    date: back.date, // the round is "completed" when the second half is saved
-    playerName: front.playerName,
-    tee: front.tee,
-    // Take the rating set from the front nine — the half that started the
-    // round — so a widow paired across a Settings change keeps the set it was
-    // actually played under rather than picking up whatever is current.
-    ratingSet: front.ratingSet,
-    // Conditions come from the front nine — the half that started the round.
-    tempC: front.tempC,
-    windKmh: front.windKmh,
-    holes: [...front.holes, ...back.holes]
+    // The round is "completed" when the second widow is saved.
+    date: newerWidow.date,
+    playerName: olderWidow.playerName,
+    tee: olderWidow.tee,
+    // Rating set, temperature and wind all come from the older widow — the
+    // half that started the round — so a pairing that straddles a Settings
+    // change keeps the set it was actually played under rather than picking
+    // up whatever is current.
+    ratingSet: olderWidow.ratingSet,
+    tempC: olderWidow.tempC,
+    windKmh: olderWidow.windKmh,
+    holes: [...olderWidow.holes, ...back]
   });
 }
 
-// Resolves what happens when a nine-hole round finishes and a pending widow
-// (an unpaired nine-hole record from a previous day) may or may not exist.
-// Pairing only ever happens when the two halves are complementary (front+back).
-// If the same half is played again (e.g. front-9 widow, then front-9 again),
-// the two do NOT pair — the older widow is abandoned and the newly played nine
-// becomes the sole pending widow. This is what keeps a run of same-half plays
-// from ever silently producing a fabricated 18-hole round.
+// Resolves what happens when a Widow is created and an earlier unpaired Widow
+// may already be waiting.
+//
+// One waiting widow + a new widow = a completed round. That is the whole rule.
+//
+// It used to refuse to pair unless the two halves were complementary
+// (front+back). Since every round starts at Hole 1, every widow was 'front',
+// so that condition was never satisfiable: widows could be banked but never
+// recovered, each new one silently discarding the last, and the nine holes
+// never reached rounds-history or Analytics at all. Do not reintroduce a
+// half/complementary check — on a nine-hole course it has no meaning.
 export function resolvePendingNine(pendingNine, justPlayedNine) {
   if (!pendingNine) return { pairedRound: null, newPendingNine: justPlayedNine };
-  if (pendingNine.half === justPlayedNine.half) {
-    return { pairedRound: null, newPendingNine: justPlayedNine };
-  }
   return { pairedRound: pairNineHoleRecords(pendingNine, justPlayedNine), newPendingNine: null };
 }
 
