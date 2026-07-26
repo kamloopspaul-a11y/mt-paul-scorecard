@@ -11,7 +11,7 @@
 // hosted on GitHub Pages under a repo subpath, not domain root — see
 // manifest.json's start_url/scope for the same concern.
 
-const CACHE_NAME = 'bogey-v7'; // bumped 2026-07-25 (nav-row gap fix: .screen-scroll padding-bottom now tracks the nav row's measured height via --nav-row-h, closing the 12-16px gap under every screen's photo). Previously bumped for the Analytics/handicap pass: js/stats.js rewritten to WHS Rules of Handicapping — net double bogey (3.1b), par+5 before an Index exists (3.1a), Rule 5.2a fewer-than-20 table, 0.96 multiplier removed, 54.0 cap, FIR denominator now fairways available not holes played, men's/ladies' rating sets; js/app.js Settings gains the Ratings switch + rating-set restamp prompt and captures si/ratingSet onto rounds; js/course-data.js adds getStrokeIndex(); js/round-record.js + js/settings-record.js carry the new fields; index.html cache-buster at ?devcb12
+const CACHE_NAME = 'bogey-v8'; // bumped 2026-07-25 (nav-row gap fix: .screen-scroll padding-bottom now tracks the nav row's measured height via --nav-row-h, closing the 12-16px gap under every screen's photo). Previously bumped for the Analytics/handicap pass: js/stats.js rewritten to WHS Rules of Handicapping — net double bogey (3.1b), par+5 before an Index exists (3.1a), Rule 5.2a fewer-than-20 table, 0.96 multiplier removed, 54.0 cap, FIR denominator now fairways available not holes played, men's/ladies' rating sets; js/app.js Settings gains the Ratings switch + rating-set restamp prompt and captures si/ratingSet onto rounds; js/course-data.js adds getStrokeIndex(); js/round-record.js + js/settings-record.js carry the new fields; index.html cache-buster at ?devcb12
 
 const PRECACHE_URLS = [
   './',

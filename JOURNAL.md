@@ -1561,3 +1561,70 @@ Analytics renders: Today's Round → weekly charts → Last 10 Rounds → Member
 `sw.js` at `bogey-v5`; `index.html` at `?devcb35` (CSS and JS on the same token — bump both together, now load-bearing since the SW matches with `ignoreSearch`). `wip/whs-test.mjs` 72/72.
 
 **Nothing in this session was verified on a real device.** Steppers are 32px, the hero/tile ratio is untested at phone width, and the `tel:` link has never been tapped. All three want a look on the phone.
+
+---
+
+## Session — 2026-07-25 (cont.) — First deploy in days; two device fixes from Paul's testing
+
+Short session against the live GitHub Pages build, and the first one where findings came off a real phone rather than a desktop browser at simulated width.
+
+### Everything since Jul 24 was sitting uncommitted
+
+The working tree held 3,421 insertions across 11 files — the whole Analytics build-out — with `origin/main` still on `a118534` ("Pass 6"). Pages had been serving that stale build the entire time. Committed as `be47f8f` and pushed, at which point the live site jumped several sessions forward at once.
+
+Three stale git locks (`index.lock`, `HEAD.lock`, `objects/maintenance.lock`, all dated Jul 24) had to be cleared first. The sandbox can't unlink inside the iCloud folder without an explicit permission grant, and left alone these would have silently blocked every future commit. Worth checking for if a commit ever fails with "Another git process seems to be running."
+
+`ab19f12` then dropped the `.gitignore` rule for `/q`; that stray fragment is long gone, so the rule and its note asking Paul to delete the file by hand were both dead weight.
+
+**Confirmed by the deploy:** the cache-busting works in production. `bogey-v5` + `?devcb35` had only ever been proven in a dev browser; Paul saw new CSS and JS through an installed service worker on the phone, so the token bump does genuinely evict the old cache. That had been an assumption until now.
+
+### The photo/nav-row gap — arithmetic, not eyeballing
+
+Paul, on device: every screen's photo sat too high off the nav row — "not 2px, looks more like 12-16px... applies to all of them."
+
+`.hole-photo`'s `margin-bottom` was correctly 2px. The cause was `.screen-scroll { padding-bottom: 76px }`, which double-counted the bottom offset `.screen`'s own `padding-bottom` already provides. Measuring up from `.screen`'s bottom edge:
+
+```
+.screen padding-bottom          32
+.screen-scroll content edge     32 + P
+photo bottom (2px margin)       32 + P + 2
+.nav-row top (absolute, bottom:32, height H)   32 + H
+
+gap = P + 2 - H
+```
+
+With `P = 76` and a real `H` of ~62–66px that leaves 12–16px — exactly what Paul measured, and it applies to all five screens using the pattern (Start Round, the 18 hole screens, Front 9 Score, Final Score) because it's one shared rule. The 32px is paid for once by `.screen` and must not be added again by the child.
+
+The gap is 2px only when `P == H`, so `.screen-scroll` now uses `var(--nav-row-h)`, written by `syncNavRowHeight()` after each render, on resize, and on `document.fonts.ready`. Measured rather than hardcoded because the buttons are Hanken Grotesk loaded with `font-display:swap` — the row is one height in the fallback stack and another once the webfont lands, so no fixed number is right on both sides of the swap. That swap is the likely reason it drifted originally. Fallback `62px` covers the pre-measure frame.
+
+`9650fe7`. Verified good on device afterwards.
+
+### Accidental zoom on a tap that carried a slight drag
+
+Paul: a tap with a small swipe in it zoomed the page several steps, needing a pinch to get back.
+
+Ruled out first: iOS focus-zoom fires only when an input's `font-size` is under 16px, and `.field`'s inputs are already exactly 16px. So it wasn't that. It was double-tap zoom — two taps within ~300ms and a short distance of each other read as the gesture, and the controls tapped repeatedly (score rockers, off-season steppers) are where a quick second tap lands close enough to qualify.
+
+`touch-action: manipulation` — "panning and pinch zoom, but no double-tap zoom." Set on `body` rather than per-button, because the stray tap often lands just *beside* a control, on the container behind it, where a button-scoped rule would never fire. Controls additionally opt out of text selection and the long-press callout, which was the other half of the symptom: a drag across a button's label used to raise selection handles.
+
+**`user-scalable=no` was deliberately not used.** It's what most search results suggest, iOS Safari has ignored it since iOS 10, and it would remove pinch zoom outright — which Paul needs to recover, and which WCAG 1.4.4 requires.
+
+`e800b80`. Paul tested several deliberate mini-swipes against it and it held; the label-highlight behaviour also stopped.
+
+**Correction to what was claimed at the time.** `manipulation` on `body` was described as removing double-tap zoom outright. It doesn't — Paul found a deliberate, well-separated double tap still zoomed, because the gesture is resolved partly above `body` at the document level where `body`'s declaration never sees it. Repeating the rule on `html` closes that path. Done on Paul's instruction: during testing a stray zoom breaks a fast back-track through the 18 hole screens. Pinch zoom is unaffected either way — `manipulation` only ever suppresses double-tap.
+
+### Also settled
+
+- **`tel:` link works.** Call Clubhouse tested from the phone — the last of the three Pass-7 items that had never been tapped.
+- **Off-season steppers still unverified**, and can't be verified before October: the table only renders 1 Oct – 31 Mar, so it isn't on the page today. Testing it sooner needs a stubbed clock or a dev override.
+
+### Parked
+
+Carried forward unchanged from the previous close: Membership possibly moving out of Setup onto its own page; the four built-but-unrendered 20-round sections; the weekly rolling window's fate at 20 rounds; the early gating ladder; and the stale localStorage tally (`2025-10:3, 2025-11:2, 2025-12:3, 2026-02:1`) whose 2026 entry still adds 1 to this season's Rounds Played.
+
+Still open on device:
+
+- **Hero/tile ratio at phone width** — never checked on real hardware.
+- **A "bookmark-type" issue** Paul hit but couldn't pin down well enough to describe. Noted deliberately without a theory attached, so whatever it turns out to be isn't prejudged by a guess written down today. Needs the conditions that reproduce it before anything is changed.
+
+`sw.js` at `bogey-v8`; `index.html` at `?devcb38`.

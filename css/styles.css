@@ -108,6 +108,15 @@ button, .btn, .os-btn, .icon-btn, [role="button"] {
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* Same rule as body, one level up. Setting it on body alone stopped the
+     accidental zoom (Paul tested several mini-swipes against it), but a
+     deliberate, well-separated double tap still got through -- the gesture
+     is resolved partly above body at the document level, so body's
+     declaration never sees it. Repeating it here closes that path too.
+     Wanted during testing, where a stray zoom breaks a fast back-track
+     through the 18 hole screens. Pinch zoom is still unaffected:
+     `manipulation` only ever suppresses double-tap. */
+  touch-action: manipulation;
 }
 
 #app {
