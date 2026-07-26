@@ -6,8 +6,17 @@
 // One round = one entry in the `rounds-history` localStorage array, appended
 // (never mutated) when Final Score -> Save completes for a full 18 holes.
 
-export function buildRoundRecord({ date, playerName, tee, holes }) {
-  // holes: array of 18 { holeNum, par, score, fir, gir, pen, ud, putts }
+export function buildRoundRecord({ date, playerName, tee, ratingSet, tempC, windKmh, holes }) {
+  // holes: array of 18 { holeNum, par, si, score, fir, gir, pen, ud, putts }
+  //   par: par for this hole on this tee
+  //   si:  stroke index, 1 = hardest (null on rounds saved before 2026-07-25).
+  //        Captured at play time so Analytics' net double bogey adjustment
+  //        (WHS Rule 3.1b) works off the round itself, not a course file that
+  //        may since have been re-rated or may describe a different course.
+  //   score: the ACTUAL score the player entered — never an adjusted figure.
+  //        Adjustment for handicap purposes happens only inside Analytics
+  //        (stats.js adjustedGrossScore); nothing here, and no play screen,
+  //        ever stores or displays an adjusted hole score.
   //   fir: true | false | null (null on par 3s — no fairway to hit)
   //   gir, pen, ud: boolean
   //   putts: strokes taken with the ball already on the green only (see rule below)
@@ -18,6 +27,25 @@ export function buildRoundRecord({ date, playerName, tee, holes }) {
     date,                          // ISO string, when the round was saved
     playerName,
     tee,                           // 'blue' | 'red'
+    // Rating set in effect when this round was played. Captured per round, not
+    // read live from Settings, so changing the Settings switch never rewrites
+    // the differentials of rounds already posted. Rounds saved before this
+    // field existed have it undefined and fall back to 'male'.
+    ratingSet: ratingSet || 'male',
+    // Conditions at the start of the round (2026-07-25). Stored as two separate
+    // numbers, never a formatted string, so they can be filtered and compared:
+    // "average hole score when wind > 20", "scoring by temperature band".
+    //
+    // Captured because weather is the one thing here that CANNOT be added
+    // retroactively — any aggregation over data already in the file can ship in
+    // a later update and work across past rounds, but a field that was never
+    // recorded is gone for good. The app was already fetching this for the
+    // Start Round readout and discarding it.
+    //
+    // null on either field means the fetch failed (offline at the course, API
+    // down) — never 0, which is a real temperature and a real wind speed.
+    tempC: typeof tempC === 'number' ? tempC : null,     // degrees Celsius
+    windKmh: typeof windKmh === 'number' ? windKmh : null, // km/h
     holes,                         // the 18 per-hole buckets, unmodified
     front9Score: sum(front9, 'score'),
     back9Score: sum(back9, 'score'),
@@ -30,9 +58,14 @@ export const EXAMPLE_ROUND_RECORD = {
   date: '2026-07-23T18:42:00.000Z',
   playerName: 'Dave',
   tee: 'blue',
+  ratingSet: 'male',
+  tempC: 18,
+  windKmh: 8,
   holes: [
-    { holeNum: 1, par: 4, score: 5, fir: true, gir: false, pen: false, ud: true, putts: 2 },
-    { holeNum: 2, par: 3, score: 3, fir: null, gir: true, pen: false, ud: false, putts: 1 }
+    // ud is true only when the green was missed AND holed in one putt — a chip
+    // (or pitch/bunker shot) plus a single putt. Hole 1 below is exactly that.
+    { holeNum: 1, par: 4, si: 5, score: 5, fir: true, gir: false, pen: false, ud: true, putts: 1 },
+    { holeNum: 2, par: 3, si: 13, score: 3, fir: null, gir: true, pen: false, ud: false, putts: 1 }
   ],
   front9Score: null, // sum of holes 1-9 score
   back9Score: null,  // sum of holes 10-18 score
@@ -47,10 +80,28 @@ export const EXAMPLE_ROUND_RECORD = {
 // Quitting after at least 9 holes are recorded saves those 9 holes as a pending
 // nine-hole record (below) rather than discarding them. Quitting before 9 holes
 // are complete discards `currentRound` entirely — there is nothing valid to save.
-export function buildNineHoleRecord({ date, playerName, tee, half, holes }) {
+export function buildNineHoleRecord({ date, playerName, tee, ratingSet, tempC, windKmh, half, holes }) {
   // half: 'front' | 'back' — which 9 this is, so pairing knows the hole order.
   const sum = (arr, key) => arr.reduce((s, h) => s + (h[key] || 0), 0);
-  return { date, playerName, tee, half, holes, nineScore: sum(holes, 'score') };
+  return {
+    date, playerName, tee,
+    ratingSet: ratingSet || 'male',
+    // Conditions at the start of the round (2026-07-25). Stored as two separate
+    // numbers, never a formatted string, so they can be filtered and compared:
+    // "average hole score when wind > 20", "scoring by temperature band".
+    //
+    // Captured because weather is the one thing here that CANNOT be added
+    // retroactively — any aggregation over data already in the file can ship in
+    // a later update and work across past rounds, but a field that was never
+    // recorded is gone for good. The app was already fetching this for the
+    // Start Round readout and discarding it.
+    //
+    // null on either field means the fetch failed (offline at the course, API
+    // down) — never 0, which is a real temperature and a real wind speed.
+    tempC: typeof tempC === 'number' ? tempC : null,     // degrees Celsius
+    windKmh: typeof windKmh === 'number' ? windKmh : null, // km/h // carried so a paired round keeps it
+    half, holes, nineScore: sum(holes, 'score')
+  };
 }
 
 // Pairs a completed front-9 and back-9 nine-hole record into one full 18-hole
@@ -71,6 +122,13 @@ export function pairNineHoleRecords(nineA, nineB) {
     date: back.date, // the round is "completed" when the second half is saved
     playerName: front.playerName,
     tee: front.tee,
+    // Take the rating set from the front nine — the half that started the
+    // round — so a widow paired across a Settings change keeps the set it was
+    // actually played under rather than picking up whatever is current.
+    ratingSet: front.ratingSet,
+    // Conditions come from the front nine — the half that started the round.
+    tempC: front.tempC,
+    windKmh: front.windKmh,
     holes: [...front.holes, ...back.holes]
   });
 }

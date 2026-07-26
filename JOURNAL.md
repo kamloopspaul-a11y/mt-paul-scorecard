@@ -548,3 +548,1016 @@ Already at `bogey-v4` from the prior pass's work (hamburger menu + Front 9 Score
 - **`--switch-on-knob`/`--switch-off-knob` CSS custom properties duplicate values already exported from `js/stats-defaults.js`** because plain CSS can't import a JS module — flagged inline in the CSS with a comment; if `stats-defaults.js`'s gradient/shadow values ever change, these four `:root` custom properties need a matching manual update (the rockers themselves don't have this problem — they read the JS constants directly).
 - **Fix 6's photo**: went with `assets/09-Score-Card.png` over the brief's suggested `00-Bogey-Screen2.png` because the latter turned out to be a near-duplicate of the photo already on Final Score — flagging this substitution explicitly in case Paul had a specific reason to want `00-Bogey-Screen2.png` used somewhere.
 - Per the standing reminder from every prior pass: any *future* edit to a precached file must bump `CACHE_NAME` again past `bogey-v4`.
+
+---
+
+## Session — 2026-07-25 — Analytics test fixture (Index 20.0) + FIR denominator bug
+
+### What changed
+
+- **`js/app.js`** — replaced the random `generateTestRounds()` with `fetchTestRounds()`, which loads a fixed fixture from `wip/test-rounds-20.json`. `loadTestData()` is now `async` and toasts "Test data unavailable" on a failed fetch. Holes are still fed through `buildRoundRecord()` rather than trusting the file's own sums, keeping `round-record.js` the single place those totals are computed. `clearTestData()` and the backup-once behaviour are unchanged.
+- **`index.html`** — dev cache-buster bumped `js/app.js?devcb8` → `?devcb9`. Worth noting for future sessions: edits to `js/app.js` are invisible in the browser until this is bumped, even with the SW unregistered and a hard reload. Cost ~20 minutes this session before the cause was spotted.
+- **`wip/test-rounds-20.json`** (gitignored) — the fixture itself.
+- **`wip/make-test-rounds.py`** (gitignored) — the generator + its verification pass, seeded (`SEED = 20260725`) so re-running reproduces the identical file.
+
+### Why a fixed fixture
+
+The old generator rolled every field independently, so it emitted holes that cannot exist. Across its 360 holes: **8** with `score − putts < 1` (e.g. par 3, score 2, 2 putts) and **43** flagged `ud: true` without a 1-putt. Every figure in the Scrambling & Putting card was therefore computed from contradictory inputs — a real bug and bad input data were indistinguishable. Round totals and FIR-on-par-3 handling were the only things that held up.
+
+### The fixture
+
+Player profile per Paul: streaky, Handicap Index 20.0. Scores 66–94 (avg 82.5), deliberately jagged in chronological order rather than a smooth trend, and within each round the good and bad holes are clustered into runs of 2–5 (mean run of par-or-better 2.19 holes; of double-or-worse 1.94) instead of sprinkled evenly by stroke index.
+
+Anchored so `handicapIndex()` reports exactly **20.0** on Mt. Paul blue (CR 59.0 / slope 86): best 8 of 20 differentials are `9.2, 14.5, 18.4, 21.0, 23.7, 25.0, 26.3, 28.9`, mean 20.875, × 0.96 = 20.04 → 20.0. Confirmed rendering in the app.
+
+Four consistency rules hold on all 360 holes, verified both offline and in-browser against `localStorage` after load — 0 violations of each:
+
+1. `score = strokesToGreen + putts`, with `strokesToGreen >= 1`
+2. `gir === true` ⟺ `score === par - 2 + putts`
+3. `ud === true` ⟺ `!gir && putts === 1`
+4. `fir === null` on every par 3; `pen` only on holes played over par
+
+Resulting aggregates: FIR 50% (of par 4s), GIR 31%, PEN 5%, 32.5 putts/round, scrambling 14%, up-and-down 37%, putts/GIR 2.0, putts/missed-GIR 1.7, 1/2/3+ putts 31/57/12%, distribution 8% birdie / 27% par / 31% bogey / 34% bogey+.
+
+### Bug found: FIR denominator includes par 3s
+
+`js/stats.js:328` (season) and `:417` (today) both compute FIR as `aggregateHoles(holeRecords, () => true, countAndPct(h => h.fir))` — denominator is **all 18 holes**. The inline comment dates this to "Pass 5 Fix 1", when the owner decision was that FIR is shown on every hole including par 3s.
+
+That decision was **reversed in Pass 7** (`js/app.js:960`): FIR is now hidden on every par-3 hole. `stats.js` was never updated to match. `goToHoleScreen()` still defaults `fir: false` on every hole (`js/app.js:274`), so in a real round all 8 par 3s record a permanent automatic miss that lands in the denominator.
+
+On Mt. Paul this is severe — 8 of 18 holes are par 3s. The fixture shows 99 fairways hit from 200 par-4 tee shots: **50%** correctly, **28%** as the app reports it. Roughly a 44% understatement, and it will affect real rounds identically.
+
+Not fixed this session — the Pass 5 → Pass 7 reversal was an owner decision, so which way `stats.js` should follow is Paul's call. Two options: filter the denominator to `h.fir !== null` (matches `round-record.js`'s documented `fir: true | false | null` contract and the fixture), or keep all 18 holes and treat FIR as a whole-round rate. The first is standard golf-stat practice.
+
+### Also noted
+
+- `round-record.js`'s `EXAMPLE_ROUND_RECORD` (line 34) has `ud: true` with `putts: 2` — contradicts rule 3 above. It's illustrative only and nothing reads it, but it's the wrong example to leave in the file that documents the record shape.
+
+### Open
+
+- `CACHE_NAME` still `bogey-v4`; `js/app.js` and `index.html` both changed this session. Next deploy touching a precached file must bump past v4. (Testing block is `/wip/`-backed and never ships, but the `js/app.js` edit itself is real.)
+- Rendering issue spotted on Today's Stats before the fixture work: percentage labels sit left of their bars rather than centred, and a 0% bar still draws a visible stub. Not yet investigated.
+
+---
+
+## Session — 2026-07-25 (cont.) — WHS-compliant handicap engine + FIR denominator fix
+
+Paul asked whether aligning with world golf statistics formulas would make the app portable to other courses. Auditing `js/stats.js` against the R&A Rules of Handicapping turned up two deviations in the handicap math on top of the FIR bug, both course-dependent in how wrong they are — so they were invisible on Mt. Paul and would not have travelled.
+
+### What was wrong
+
+1. **The 0.96 multiplier was retired in 2020.** Rule 5.2b is "average the lowest 8 of the most recent 20 Score Differentials and round to the nearest tenth" — no multiplier. The ×0.96 belonged to the pre-2020 USGA system, which also used the lowest *10* of 20. The app had WHS's best-8 paired with the old system's multiplier.
+2. **Differentials used raw gross scores.** Rule 5.1 takes the *Adjusted* Gross Score, with every hole capped at **net double bogey** (Rule 3.1b) = par + 2 + strokes received. `stroke_index` had been sitting in `mt-paul-handicap-ratings.json` unused — this is what it is for.
+3. **`Math.trunc` instead of round.** Rule 5.2 says rounded to the nearest tenth.
+4. **FIR denominator was all 18 holes** (see previous entry).
+
+On the old fixture the first two errors pulled opposite ways and nearly cancelled: 20.0 as shipped, 20.9 with the multiplier dropped, 19.5 with net double bogey added. How much they cancel depends on slope, par and strokes received, so a par-72 course would have landed somewhere else entirely.
+
+### What changed in `js/stats.js`
+
+New exports: `strokeIndexForHole()`, `courseHandicap()`, `strokesReceivedOnHole()`, `adjustedGrossScore()`, `whsSelectionFor()`, `countingDifferentials()`, `MAX_HANDICAP_INDEX`.
+
+- **Net double bogey (3.1b)** — per-hole cap of par + 2 + strokes received, with the par + 5 cap before an index is established (3.1a) and the Course Handicap > 54 / 4+ strokes edge case.
+- **Rule 5.2a table** — 3 rounds: lowest 1 − 2.0; 4: lowest 1 − 1.0; 5: lowest 1; 6: lowest 2 − 1.0; 7–8: lowest 2; 9–11: lowest 3; 12–14: lowest 4; 15–16: lowest 5; 17–18: lowest 6; 19: lowest 7; 20: lowest 8. Returns null below 3 scores — no index exists.
+- **No 0.96, round (not truncate) to nearest tenth, cap at 54.0** (5.2b, 5.3).
+- **PCC (5.6) is 0 and that is correct, not a shortcut** — it needs 8+ acceptable scores from different players on the same course the same day, and is defined as 0 otherwise. A single-player app never has a field. Documented inline so nobody "fixes" it later.
+- **The circularity** (differentials need adjusted gross → needs Course Handicap → needs an Index) is resolved by iterating to a fixed point, seeded from the par+5 caps. Converges in 2–3 passes; loop is capped regardless.
+- **FIR denominator** now keys on `h.par >= 4` at both call sites. Keys on par, not on `fir === null`, because `goToHoleScreen()` defaults `fir: false` on every hole — existing saved rounds carry false on par 3s and a null check would silently miss them. Also picks up par 5s free on future courses.
+
+### Portability
+
+`strokeIndexForHole()` prefers `h.si` on the hole record and falls back to the ratings file. Nothing writes `h.si` yet — when multi-course support lands, capture SI onto the hole at save time and the per-round path takes over with no change to `stats.js`. That is the one remaining piece needed before a history spanning several courses stays correct, since the ratings file is Mt. Paul only.
+
+Everything else is already data-driven: CR/slope by tee, par summed from the round's own holes, SI allocation handles any hole count and multi-loop Course Handicaps.
+
+### Verification
+
+`wip/whs-test.mjs` (gitignored), 40 assertions, all green — run with `node wip/whs-test.mjs`:
+
+- the full Rule 5.2a table, including "fewer than 3 → no index"
+- the R&A's own worked clarifications 5.2a/1 (differentials 15.3/15.2/16.6 → 13.2) and 5.2a/2 (six scores, lowest two average 38.4, −1.0 → 37.4)
+- stroke allocation at Course Handicaps 0, 11, 18, 22, 36 and plus handicaps
+- net double bogey caps landing on the right holes: a 10 on the SI 1 par 4 and an 8 on the SI 18 par 3 adjust to +3/+2 at CH 11, +2/+2 at CH 0, +5/+5 unestablished, and a clean round is untouched
+- an explicit assertion that the index is **not** mean × 0.96
+- the 54.0 cap
+
+Cross-checked the JS engine against an independent Python implementation in `wip/make-test-rounds.py` — identical adjusted gross scores, differentials, Course Handicap and index — then confirmed in-browser.
+
+### Fixture re-anchored
+
+`wip/test-rounds-20.json` regenerated to read exactly 20.0 under the corrected math. Scores 67–93, average 82.6, Course Handicap 10, counting differentials `10.5, 13.1, 19.7, 21.0, 21.0, 22.3, 22.3, 30.2` (unrounded mean 20.0125). Streaky profile and all four hole-consistency rules preserved; 0 violations across 360 holes.
+
+Anchoring is coarser than it looks: one stroke moves the mean of eight differentials by ~0.16, so hitting a specific tenth needs a search over score sets rather than a nudge. The generator does that search against its own output so the profile survives the anchoring instead of being flattened to hit a number.
+
+Rendered figures: Index 20.0, scoring avg 82.6, best 67, worst 93, 33.1 putts/round, FIR 52%, GIR 30%, PEN 4%.
+
+### `js/app.js`
+
+The Handicap card's hard-coded "Best 8 Score Differentials of Last 20 Rounds" now reads off what was actually used — with 11 rounds on record it says "Lowest 3 Score Differentials of Last 11 Rounds". Added `roundCount` to `buildAnalytics()`'s return for this. Empty state distinguishes "fewer than 3 rounds" from "unrecognized tee".
+
+### `wip/devserver.py` — new
+
+`python3 -m http.server` sends no cache headers, so Chrome heuristically caches ES modules. Because `index.html` only busts `js/app.js?devcbN`, edits to `js/stats.js` stayed invisible through reloads *and* through bumping that number — the browser served a stale `stats.js` while running a fresh `app.js`, producing a half-updated screen (new label, old numbers) that looked like a logic bug. Cost ~20 minutes twice in one session.
+
+`wip/devserver.py` is `http.server` plus `Cache-Control: no-store`. Save, reload, see the edit — nothing to bump:
+
+    cd ~/Documents/Studio/Projects/ScoreCard && python3 wip/devserver.py
+
+`index.html`'s `?devcbN` left in place (now at `devcb10`) so nothing changes for anyone serving the folder another way.
+
+### Open
+
+- **Not implemented, by decision:** Low Handicap Index (5.7), soft/hard cap (5.8), Exceptional Score Reduction (5.9). All need a stored 365-day index history and retro-adjustment of past differentials. Paul chose core rules only. The index will therefore track slightly high after a bad streak versus a full WHS service, which only diverges once a Low Handicap Index would have been established.
+- `h.si` is read but never written — needed before multi-course history is trustworthy.
+- `EXAMPLE_ROUND_RECORD` in `round-record.js` still has `ud: true` with `putts: 2`, contradicting the up-and-down definition.
+- Today's Stats bar labels still sit left of their bars; 0% bars still draw a stub. Untouched.
+- `CACHE_NAME` still `bogey-v4`; `js/app.js`, `js/stats.js` and `index.html` all changed. Next deploy touching a precached file must bump past v4.
+
+---
+
+## Session — 2026-07-25 (cont.) — SI capture, Actual vs Adjusted terminology, estimated handicap
+
+### Terminology (Paul, this session — now the standing rule)
+
+- **Actual Score** — what the player entered on each hole. This is what every play screen, the scorecard, Today's Stats, scoring average, best/worst round and all shot stats show. Nothing outside the handicap path ever stores or displays an adjusted figure.
+- **Adjusted hole scores** — a handicap-only concept (WHS Rule 3.1), computed inside `stats.js adjustedGrossScore()` and surfaced only in Analytics.
+
+Verified this already holds: `roundTotalScore()` sums actual scores and feeds everything except `scoreDifferential()`. The rule is now written into `round-record.js`'s record-shape comment so it doesn't drift.
+
+### SI capture on the round record
+
+`js/course-data.js` — new `getStrokeIndex(courseData, tee, holeNum)`.
+
+`js/app.js goToHoleScreen()` — every hole draft now carries `si` alongside `par`, so it's committed with the hole at play time. A round therefore stays correct if the course is re-rated later, and stays correct once rounds from more than one course share a history — the ratings file is Mt. Paul only and can't answer for another course.
+
+`js/stats.js flattenHoleRecords()` carries `si` through; `strokeIndexForHole()` already preferred it. Precedence verified: record `si` wins, ratings file is the fallback, null when neither exists (which leaves the score unadjusted rather than guessing at SI 1). Rounds saved before today have `si: null` and fall back cleanly — no migration needed.
+
+`round-record.js`'s `EXAMPLE_ROUND_RECORD` also fixed: it had `ud: true` with `putts: 2`, contradicting the up-and-down definition. Now `putts: 1`, with a comment stating the rule, and both example holes carry `si`.
+
+### Rule 3.1a vs 3.1b is per round, not global
+
+Paul asked for the estimate to stay as close to WHS as possible, which surfaced a subtlety worth implementing properly: **which cap applies depends on whether a Handicap Index was in effect when that round was played.**
+
+- Rounds played before an Index exists cap at **par + 5** (Rule 3.1a).
+- Rounds played after cap at **net double bogey** (Rule 3.1b).
+- WHS does not retroactively re-adjust the early rounds once an Index arrives.
+
+An Index is established once 3 scores are posted, so rounds 1–3 keep par + 5 permanently and round 4 is the first played under 3.1b. New `indexInEffectFor(i)` and `windowDifferentials()` resolve this per round from chronological position in the full history — no stored state needed. Previously the engine applied one global flag, which over-adjusted the first three rounds.
+
+This moved the fixture from 20.0 to 20.5, so it was re-anchored again (below).
+
+### Estimated handicap before 3 rounds
+
+`handicapIndex()` now returns a figure with 1–2 scores instead of null; `handicapWithStatus()` reports which it is:
+
+- `status: null` — no rounds, shows —
+- `status: 'estimate'` — 1–2 rounds, **our** number (WHS defines none below 3)
+- `status: 'index'` — 3+ rounds, a real Handicap Index
+
+The estimate reuses Rule 5.2a's own 3-score row exactly — lowest 1 differential, −2.0 — so it's the same formula the real Index will use at round 3 and the number doesn't lurch on the formula changing; only the label does. (It can still move a lot if round 3 is much better than rounds 1–2, which is data, not a formula artefact.)
+
+Analytics heading switches to "Estimated Handicap" with a sub-line: "Estimate — 2 more rounds to establish a Handicap Index".
+
+### Honest window labels
+
+Three headings hard-coded a 20-round window and lied with fewer rounds on record. All now read off `roundsCount`:
+
+- "Best 8 Score Differentials of Last 20 Rounds" → "Lowest 1 Score Differential of the Last 2 Rounds"
+- "20 Round Average" → "2 Round Average"
+- Season Stats / Score Distribution / Hole Ratings already used `windowLabel`; added `windowLabelTitle` for title-case use. Removed a duplicate `roundCount` I'd added on top of the existing `roundsCount`.
+
+### Fixture re-anchored (again)
+
+`wip/test-rounds-20.json` regenerated for the per-round 3.1a/3.1b rule. Scores 67–92, average 82.3, Course Handicap 10, counting differentials `10.5, 13.1, 19.7, 19.7, 22.3, 22.3, 22.3, 30.2` (unrounded mean 20.0125 → **20.0**). Streaky profile and all four hole-consistency rules intact, 0 violations across 360 holes. The generator's Python verification now mirrors the per-round rule too, so it and `stats.js` stay cross-checkable.
+
+Rendered: Index 20.0, scoring avg 82.3, best 67, worst 92, 32.9 putts/round, FIR 48%, GIR 34%, PEN 5%.
+
+### Verification
+
+`wip/whs-test.mjs` now 58 assertions, all green (`node wip/whs-test.mjs`). Added: per-round 3.1a/3.1b boundary, stroke-index precedence (record beats ratings file beats null), all four estimate/index states with their round counts, that estimate and Index agree when the lowest differential is unchanged, and the fixture's 20.0 anchor. Also fixed a stale assertion from earlier today that expected `handicapIndex()` to return null at 2 rounds — deliberately changed behaviour.
+
+In-browser at 1, 2, 3 and 20 rounds: "Estimated Handicap 28.2 / 2 more rounds", "Estimated Handicap 28.2 / 1 more round", "Handicap Index 20.3 / Lowest 1 Score Differential of the Last 3 Rounds", "Handicap Index 20.0 / Lowest 8 ... of the Last 20 Rounds".
+
+### Open
+
+- Still not implemented, by decision: Low Handicap Index (5.7), soft/hard cap (5.8), Exceptional Score Reduction (5.9).
+- Multi-course support now has what it needs on the round record (`si`, `par`, `tee`), but `getTeeRatings()` still reads the Mt. Paul ratings file by tee name only — CR/slope will need to key on course as well as tee.
+- Today's Stats bar labels still sit left of their bars; 0% bars still draw a stub. Untouched.
+- `CACHE_NAME` still `bogey-v4`; `js/app.js`, `js/stats.js`, `js/course-data.js`, `js/round-record.js` and `index.html` all changed today. Next deploy touching a precached file must bump past v4.
+- Paul: switch the local server to `python3 wip/devserver.py` — the plain `http.server` on :8000 still caches modules, and the browser checks above needed a scripted cache-reload each time to see edits.
+
+---
+
+## Session — 2026-07-25 (cont.) — Men's / Ladies' rating sets
+
+Paul noticed from the physical scorecard that men's and ladies' ratings differ, and asked whether Setup should capture it. It should — and the data was already in the repo, unused since 2026-07-22.
+
+### The gap
+
+`mt-paul-handicap-ratings.json` carries both sets:
+
+| Tee | Men's CR/Slope | Ladies' CR/Slope |
+|---|---|---|
+| Blue | 59.0 / 86 | 62.2 / 95 |
+| Red | 57.9 / 72 | 58.6 / 88 |
+
+`getTeeRatings()` hardcoded `ratings.male`, so `ratings.female` was unreachable. The gap is not cosmetic: an 82 on Blue is a **30.2** differential on the men's rating and **23.6** on the ladies' — 6.6 strokes, carried straight into the Index.
+
+Mt. Paul rates both tees for both sets off the **same physical tee boxes** — holes, yardages and stroke index are shared (the ratings file states SI is identical for men and ladies), only CR/Slope differ. So `tees.female: []` in `mt-paul-course-data.json` is not a data gap; the holes are described once.
+
+### Framing
+
+The switch is labelled **"Men's Ratings / Ladies' Ratings"**, not a gender field. It is a golf question — which published rating set the player is scored under — and that framing is both more accurate and avoids asking something personal. Stored as `ratingSet: 'male' | 'female'`.
+
+### What changed
+
+- **`js/settings-record.js`** — new `ratingSet` field, documented.
+- **`js/app.js`** — second switch in Settings directly below Blue/Red Tees, with its handler; `saveSetup()` persists it; `startRound()` snapshots it onto `currentRound`.
+- **`js/round-record.js`** — `buildRoundRecord()` and `buildNineHoleRecord()` both take and store `ratingSet` (defaulting to `'male'`); `pairNineHoleRecords()` takes it from the **front** nine, so a widow paired across a Settings change keeps the set it was actually played under rather than picking up whatever is current.
+- **`js/stats.js`** — `getTeeRatings(handicapData, tee, ratingSet)` plus `roundRatingSet(round)`. All three call sites updated: `scoreDifferential()` uses the round's own set; Course Handicap uses the newest round's set (that's what the player is currently scored under). Falls back to male if a set isn't published for a tee.
+- **`index.html`** — `?devcb10` → `?devcb11`.
+
+### Captured per round, never read live
+
+`ratingSet` is snapshotted onto the round when it starts, exactly like `si`. Flipping the Settings switch therefore has **no effect on rounds already posted** — verified in-browser: with the fixture loaded (all `ratingSet: 'male'`), the Index reads 20.0 with the setting on Ladies' and 20.0 with it on Men's. Rewriting the same rounds to `ratingSet: 'female'` gives 14.3, confirming the lookup does change when the rounds themselves say so.
+
+Rounds saved before this field existed have it undefined and fall back to `'male'` — which is what they were actually calculated with, so no history moves.
+
+### Verification
+
+`wip/whs-test.mjs` now **72 assertions, all green**. Added: all four tee/set combinations against the published values, the male default and unknown-set fallback, `roundRatingSet()` defaults including a null round, the 6.6-stroke difference on an 82, and that a mixed-set history computes differently from an all-male one while each round keeps its own set.
+
+### Note for future sessions
+
+`mcp` browser navigation to the **same URL** doesn't always produce a fresh document — the new switch was in the served `app.js` and still absent from the rendered page until navigating to `index.html?v=...` with a distinct query. Not a caching problem (devserver.py's `no-store` was confirmed on the wire, no service worker, no CacheStorage). Use a unique query string when a guaranteed fresh load matters.
+
+### Open
+
+- `getTeeRatings()` still resolves by tee name within the single Mt. Paul ratings file. Multi-course support needs it keyed on course too — but the round record now carries everything needed (`tee`, `ratingSet`, per-hole `si` and `par`), so it's a lookup change, not a data-capture one.
+- Unchanged from earlier today: LHI/soft-hard cap/ESR not implemented by decision; Today's Stats bar alignment; `CACHE_NAME` still `bogey-v4` with five files changed today.
+
+---
+
+## Session — 2026-07-25 (cont.) — Rating-set correction for initial-setup mistakes
+
+Paul's call, after noting the app is single-player and localStorage-only so the rating set is a set-once entry: add the escape hatch for the one case where set-once bites — the switch defaults to Men's, so a ladies' player who plays a few rounds before noticing would otherwise have those rounds locked to the wrong set with no way back.
+
+### Behaviour
+
+`offerRestampExistingRounds()` in `js/app.js`, called from `saveSetup()`. Fires **only** when both are true: the rating set actually changed, and there is history to correct. Then a `window.confirm` states the round count, that it recalculates Score Differentials, that it will change the Handicap Index, and what Cancel does:
+
+> Also apply Ladies' Ratings to your 20 existing rounds?
+>
+> Choose OK only if those rounds were played on Ladies' Ratings and the setting was wrong. This recalculates their Score Differentials and will change your Handicap Index.
+>
+> Choose Cancel to leave them on Men's Ratings — new rounds will use Ladies' Ratings either way.
+
+On OK, every round in `rounds-history` is restamped and a toast confirms the count. On Cancel, history is untouched and only the setting changes.
+
+The default remains non-destructive: rounds keep the set they were played under, so a stray tap on the switch still cannot silently move the Index. The correction is explicit, counted, and only offered when it could matter.
+
+### Verified in-browser, all four paths
+
+| Case | Prompt? | Result |
+|---|---|---|
+| Set changed, 20 rounds, **declined** | yes | rounds stay `male`, Index **20.0**, setting becomes female |
+| Set changed, 20 rounds, **accepted** | yes | rounds restamped `female`, Index **14.3** |
+| Set changed, **empty history** | no | setting changes only |
+| **No change** to set, 20 rounds | no | nothing touched |
+
+Round-trips cleanly — restamping female → male returns the rounds to `male`.
+
+`index.html` bumped to `?devcb12`. `wip/whs-test.mjs` still 72/72 (the restamp lives in `app.js`'s UI layer, so it's covered by the browser checks above rather than the Node suite).
+
+### Note
+
+Driving Settings save repeatedly from a script walks the app into a live round — `saveSetup()` calls `goToPlayRound()` when opened from the menu. A long chained test timed out that way mid-session; state was reset via localStorage and re-verified. Worth knowing before scripting anything that saves Settings more than once in a row.
+
+---
+
+## Decision — 2026-07-25 — Settings save model (do not "fix" this)
+
+Settings use **preview-then-commit**: the four toggles mutate local variables and CSS classes only. `writeJSON(KEYS.SETTINGS, …)` appears exactly once in the codebase, inside `saveSetup()`. Nothing on the Settings screen persists until Save is tapped. (Round data is the opposite and always has been — every hole writes to localStorage on Next, for crash resilience.)
+
+**Dark/Light mode is a deliberate exception.** Tapping it calls `applyDarkModeClass()` immediately, so the theme changes on screen before Save. If the user navigates away without saving, it reverts on next load.
+
+Paul's call, and the reason it stays: seeing the light/dark difference instantly is the point of that toggle — you can't choose a theme you can't see. The screen's whole intent is "set your basics and Save", which is a common enough pattern that the momentary mismatch doesn't confuse anyone.
+
+The Save button itself was added for reassurance (users can't tell data has persisted) and to give a clear path back for changing preferences later. It turns out to be load-bearing rather than cosmetic, since it is the only thing that writes settings.
+
+Not a bug. Do not make the toggles write on tap, and do not remove the instant theme apply.
+
+---
+
+## Session — 2026-07-25 (cont.) — Bar chart alignment + zero bars + SW cache bump
+
+### `.bar { align-self: flex-end }` was the misalignment
+
+`.bar-col` is `flex-direction: column`, so `align-self` on its children acts on the **horizontal** axis, not the vertical one. `flex-end` was therefore shoving every bar to the right edge of its column while `.bar-value` and `.bar-label` stayed centred — measured at a consistent 39–44px offset across all 24 bar columns. It read as "the labels sit left of their bars"; the bars were the ones out of place.
+
+Bottom-alignment was never coming from that rule anyway — it comes from `.bar-row`'s `align-items: flex-end`, which is the axis that actually needed it. Removing `align-self` fixes the alignment and changes nothing else. Verified: **maxOffset 0px across all 24 columns**, computed `align-self: auto`.
+
+### Zero bars no longer draw a stub
+
+Both `barRowHTML()` and `weeklySectionHTML()` used `Math.max(4, …)`, so a genuine zero rendered as a 4px nub that read as "a little bit". Now height 0 for a true zero.
+
+The weekly charts keep the grey 4px `bar-empty` marker for weeks with **no rounds at all** — so "played, scored none" (no bar) and "didn't play" (grey nub) stay visually distinct instead of collapsing into the same shape. `holeRatingBarsHTML()` left alone: an average of exactly 0.0 over par is a real data point, not an absence, and its 4px bar is correct.
+
+### `index.html` was only cache-busting half the app
+
+`css/styles.css?devcb8` had been stuck at **devcb8** while `js/app.js` was bumped repeatedly — every past bump only rewrote the `js/app.js?devcbN` string. The CSS fix above appeared to do nothing on first test for exactly this reason: the served stylesheet had the change, the loaded one still had `align-self`. Both are now on the same token (`devcb14`) and should be bumped together.
+
+### `sw.js` → `bogey-v5`
+
+Bumped from `bogey-v4` with a note listing today's changes. The precache list already covers every file touched.
+
+**Flagged, not fixed:** `PRECACHE_URLS` lists `./js/app.js` and `./css/styles.css` without query strings, but `index.html` requests them with `?devcb14`. Those precache entries can never match, so both fall through to the runtime cache on first load. Harmless offline (the runtime cache picks them up) but the precache is doing nothing for the two most important files. Either drop the query strings before shipping, or match on `ignoreSearch: true` in the fetch handler.
+
+### Open
+
+- Unchanged: LHI / soft-hard cap / ESR not implemented by decision; `getTeeRatings()` still keyed on tee within the single Mt. Paul ratings file.
+
+---
+
+## Session — 2026-07-25 (cont.) — "Today's Round" hero section (design pass)
+
+Built from Paul's Analytics mockup. His note: the screen capture is aesthetic only, its numbers are placeholders — apply the correct math.
+
+### Net uses Course Handicap, not Handicap Index
+
+The mockup showed `HI 21` and `Net: 63` on a gross of 84 — i.e. gross minus the Handicap Index. Net score is **gross − Course Handicap**, the strokes actually received on that tee:
+
+```
+Course Handicap = HI × (Slope / 113) + (Course Rating − Par)
+```
+
+On Mt. Paul Blue both terms pull down — slope 86 is below the 113 baseline, and CR 59.0 sits 5 under par 64 — so a 21 Index receives **11** strokes, not 21. Net on an 84 is 73, not 63: a 10-stroke gap, and a course-dependent one. On a par-72 course rated ~72 with slope ~113 the two are nearly identical, which is why it didn't look wrong when spec'd. Same failure mode as the pre-fix handicap bugs: correct-looking on this course, wrong everywhere else.
+
+**Consequence for the layout:** the sixth tile reads **CH**, not HI, so the subtraction is legible on screen (77 − 10 = 67). The Handicap Index keeps its own section below. Flagged to Paul to reverse if he'd rather see HI there.
+
+### What was built
+
+**`js/stats.js`** — `todaysStats` gains `pen` and `ud` counts, plus `courseHandicap` and `net`. Both are null until a Handicap Index exists, rendering as an em dash. Par total is summed from the round's own holes and the rating set read off the round, so it stays correct per-round.
+
+**`js/app.js`**
+- `todaysStatsHTML()` rebuilt as **Today's Round**: a 3×2 grid of counts (FIR / GIR / PEN, UD / PUTTS / CH) with the Actual Score as a hero beside them and net underneath.
+- Tiles are **counts for this round**, not season percentages — "how did I just do" is answered faster by 6 fairways than by 50%.
+- `barRowHTML()` now places the value **above** its bar and uses a wide-slab variant. Because `.bar-row` bottom-aligns its columns, a value placed first in the column floats just above that bar's top edge, so the numbers step with the data — matching the mockup.
+- `≤ Birdie` label adopted in both bar rows. This is a **label fix, not a logic change**: `SCORE_BUCKET_PREDICATES.birdie` has always been `score < par`, so it already counted eagles. The old "Birdie" label was the inaccurate part.
+
+**`css/styles.css`** — `.today-round` / `.today-grid` / `.today-tile*` / `.today-hero*`, plus a `.bar-row.thick` variant (full-width slabs, max 92px, larger radius) applied to Today's Round and Score Distribution. The scrolling charts (differentials, hole ratings) keep the narrow 22px bars. A 360px breakpoint drops the hero to 48px.
+
+**Zero bars reinstated as a baseline.** Earlier today a true zero drew nothing; the mockup shows a thin rule, which reads better — it anchors the column so the four bars stay a set. Now 3px with `.bar-zero` removing the top corner radius, so it reads as a baseline and not a stunted bar. The weekly charts' grey `bar-empty` marker for "no rounds that week" is unchanged and still distinct.
+
+`index.html` → `?devcb15` (both CSS and JS).
+
+### Verified
+
+Renders `5 FIR / 6 GIR / 1 PEN / 5 UD / 30 PUTTS / 10 CH`, hero `77`, `Net: 67` off the fixture — arithmetic checks (77 − 10 = 67, CH 10 from Index 20.0). Bars centred, values above, `≤ Birdie` in both rows. `wip/whs-test.mjs` still 72/72.
+
+**Not verified on a real device.** `resize_window` did not actually shrink the viewport (innerWidth stayed 1000); the content column is max-width constrained to ~428px so the proportions should hold, but per the standing rule on this project, Paul's own device check is the one that counts.
+
+### Open / next
+
+Paul's note, left mid-thought: during the first 20 rounds there isn't much to show, features appear progressively as rounds accumulate, and after the first week a rolling window of weekly stats is introduced. The pieces already in place for that — `roundsCount`, `handicapStatus` (estimate vs index), `weeklyVisible`, `todaysVisible`, honest window labels — but no deliberate disclosure ladder has been designed yet. Awaiting the rest of that spec.
+
+---
+
+## Decision — 2026-07-25 — The 7-week bridge stays; import parked
+
+**Context.** At 3 rounds/week it takes ~7 weeks to reach 20 rounds. The weekly rolling window is deliberately a "tweener" — something honest to show between zero data and a full 20-round history. Paul's framing: after 20 rounds it could be dropped, minimised, or kept; he wants to review the screen before deciding.
+
+**Decisions made:**
+
+- **The bridge stays.** Built for one known user, but the future audience is unknown, so the early-rounds experience keeps its own design rather than being treated as throwaway scaffolding.
+- **CSV import stays parked.** The intended user has history, but scores only, and is unlikely to port it.
+- **What happens to the weekly window at 20 rounds is still open** — pending Paul's review of the live screen. Options discussed: keep it lower down as a recent-form check, drop it, or collapse the four charts into one.
+- **Early gating not implemented** — proposed thresholds (Hole Ratings and Scrambling & Putting until 5 rounds, Best/Worst and Score Distribution until 3) were put to Paul and deferred with the same review.
+
+**Corrected 2026-07-25 (Paul):** the intended user's history is **hole-by-hole scores**, not just round totals — no shot stats. That is a much better position than first assessed. With per-hole scores plus par and stroke index from the course file, an import would support:
+
+- net double bogey (Rule 3.1b) and therefore a **correct** Handicap Index, not an approximate one
+- Score Distribution, Hole Ratings and the weekly Birdies/Pars/Bogeys charts — all derived from hole scores vs par
+- Today's Round hero score and net
+
+Blank for imported rounds would only be the shot-tracked fields: FIR, GIR, PEN, UD, putts — so Today's Round tiles, Season FIR/GIR, and the whole Scrambling & Putting section. Those are also exactly the stats `stats.js` treats as optional-ish already (`putts: h.putts || 0`, `fir` coerced to null, booleans defaulted false), though a real import would want them stored as genuinely absent rather than as zeros/false, or the averages would be silently wrong — a `false` GIR is a missed green, not "unknown".
+
+Import remains parked; recording this so the next look starts from the right premise.
+
+**The rolling window itself is verified correct** and needs no work. Confirmed against Paul's own sketch — fills from the right, shifts left, oldest drops off, anchored on real calendar weeks so a skipped week shows as an empty slot rather than collapsing:
+
+```
+           4 wks | 3 wks | Last Wk | This Wk
+week 1:      —   |   —   |    —    |    4
+week 2:      —   |   —   |    4    |    2
+week 3:      —   |   4   |    2    |    5
+week 4:      4   |   2   |    5    |    3
+week 5:      2   |   5   |    3    |    4
+```
+
+**Current gating, for reference when the ladder gets designed:** `isTodaysStatsVisible` ≥ 1 round, `isWeeklyChartsVisible` ≥ 2 rounds. Everything else renders from round one — including Hole Ratings (18 bars off one sample), Scrambling & Putting (labelled "All-time" from 18 holes), and Season best/worst (identical to the average at one round).
+
+---
+
+## Session — 2026-07-25 (cont.) — sw.js precache fix
+
+`PRECACHE_URLS` lists `./js/app.js` and `./css/styles.css` unversioned, but `index.html` requests them as `?devcbN`. Cache lookups are exact-match on the full URL including search string, so those two entries — the app's most important files — could never be hit. Every load fell through to the network and the precache was doing nothing for them.
+
+Fixed with `caches.match(req, { ignoreSearch: true })` rather than by stripping the query strings, so Paul's `devcbN` dev convention is untouched. Safe here: every same-origin GET this SW handles is a static asset whose query string is only ever a cache-buster — nothing is parameterised by search string, and cross-origin requests (the weather API) already return early.
+
+**New rule this creates:** bumping `devcbN` without bumping `CACHE_NAME` would now serve the stale precached file. Bump both, or neither. That is consistent with the standing rule (any change to a precached file bumps `CACHE_NAME`), just now load-bearing rather than advisory. Noted inline in `sw.js`.
+
+Currently at `bogey-v5`, `?devcb15`.
+
+### Also corrected
+
+An earlier entry in this journal assessed a scores-only import as near-worthless. Paul clarified the intended user has **hole-by-hole scores** (no shot stats), which is materially better — see the corrected note in the "7-week bridge" decision entry above.
+
+### Also: no CH → HI change was needed
+
+Claude misreported this in conversation. Paul's instruction was "change HI to CH and we'll feature the index further down" — CH is what the sixth tile already shows, and the Handicap Index already has its own section below. The build was correct; the summary describing it was not.
+
+---
+
+## Session — 2026-07-25 (cont.) — Weather captured on the round record
+
+Paul's call, from the principle that **aggregations can be added later but captured fields cannot be backfilled**. The app was already fetching temperature and wind for the Start Round readout and throwing them away; storing them costs one field each and no UI, and it's the difference between being able to ask "how do I score in wind" in two years or never.
+
+### Stored separately, never formatted
+
+`tempC` (°C) and `windKmh` (km/h) as two numbers on the round record — not a display string like "25°C | 10 km/h", which would be unfilterable. `null` on either means the fetch failed (offline at the course, API down), never `0`, which is a real temperature and a real wind speed.
+
+Captured at **tee-off**, snapshotted from `weatherState` in `startRound()` — the conditions the round was played in, not whenever it happened to be saved. Nine-hole records carry them too, and `pairNineHoleRecords()` takes them from the front nine, consistent with how `ratingSet` is handled.
+
+Touched: `js/round-record.js` (`buildRoundRecord`, `buildNineHoleRecord`, `pairNineHoleRecords`, `EXAMPLE_ROUND_RECORD`), `js/app.js` (`startRound` plus all four record-building call sites). No UI change — this is capture only.
+
+### Fixture
+
+`wip/make-test-rounds.py` now assigns plausible Kamloops summer conditions: temp 18–32 °C, wind 5–31 km/h.
+
+**Wind is deliberately correlated with score** (windier on the worse rounds), temperature is not. That correlation is fabricated, not observed — it exists so a query like "how does my scoring deviate with wind?" has a signal to find while the query is being written. Flagged in the generator so nobody mistakes it for a finding.
+
+`WEATHER_RNG` is a **separate `random.Random(SEED + 1)`**. Drawing weather from the shared stream shifted every later `deltas_for()` / `build_hole()` call and moved the Handicap Index from 20.0 to 19.2 on the first attempt. Anything added to that generator in future must use its own RNG or re-anchor the fixture.
+
+Verified back at Index **20.0**, Course Handicap 10, scoring average 82.3, FIR 48%.
+
+### The query it enables
+
+```
+avg strokes over par per hole, by wind:
+  calm (<12)     +0.22  (2 rounds)
+  breezy (12-21) +0.86  (10 rounds)
+  windy (22+)    +1.42  (8 rounds)
+```
+
+(Signal is the fabricated one described above — the point is that the shape of the query works, not the result.)
+
+### Note on the boundary this draws
+
+A round now captures, per hole: `par`, `si`, `score`, `fir`, `gir`, `pen`, `ud`, `putts`; and per round: `date`, `tee`, `ratingSet`, `tempC`, `windKmh`. Still permanently unavailable for past rounds, should they ever be wanted: club used, putt distance, miss direction, penalty type, time of day, playing partners. Those are the only decisions here that a later PWA update cannot fix.
+
+---
+
+## Session — 2026-07-25 (cont.) — Altitude recorded; Mt. Paul is a NINE-hole course
+
+### Altitude → course data, not the round record
+
+`location.elevation` in `mt-paul-course-data.json`: `min_ft 1130 / max_ft 1200` (344–366 m), a range rather than a point since the property falls ~70 ft. It belongs to the course because it never varies between rounds — unlike `tempC`/`windKmh`, which are captured per round.
+
+**Important limitation, recorded inline:** altitude is a *constant* for every round played at Mt. Paul. Thinner air adds carry (rule of thumb ~2% per 1,000 ft, so ~2% here), but a constant explains none of the variation *between* rounds. It only becomes analytically useful when comparing Mt. Paul against a course at a different elevation. Worth having on file; not worth expecting insight from it on its own.
+
+`_meta._diverged_from_source` notes that re-pulling the file from the Golf project's `courses.json` would drop this field.
+
+### Mt. Paul has nine holes, not eighteen
+
+Paul's correction, and it matters. Verified in the data: for **both** tees, holes 1–9 and 10–18 are identical in par and yardage. An 18-hole round is two loops of the same nine, so **hole N and hole N+9 are the same physical hole**.
+
+Stroke index is the correct exception — distinct across all 18 (front `5,13,11,3,17,1,15,7,9`, back `6,14,12,4,18,2,16,8,10`) — which is normal for a nine played twice, so strokes allocate one loop at a time. Nothing in the handicap maths changes.
+
+Recorded in `_meta._nine_hole_course` with the aggregation rule: **use `((holeNum - 1) % 9) + 1` for per-hole analysis**; keep 1–18 only when the two loops are deliberately being compared.
+
+**Consequence for Analytics, flagged not fixed:** Hole Ratings renders 18 bars for 9 physical holes — each hole appears twice under different labels. Pooling both loops also doubles the sample, 40 plays per hole from 20 rounds instead of 20:
+
+```
+physical hole | par | plays | avg over par | GIR%
+      6         4      40       +1.25        30%
+      4         4      40       +1.23        15%
+      1         4      40       +1.10        38%
+      ...
+```
+
+Left alone because Paul is working top-down through the UI and hasn't reached Hole Ratings yet.
+
+**Also corrects a suggestion made earlier this session:** the "GIR on holes 6 and 15" idea for testing the temperature/distance hypothesis was wrong — those are one hole, the 345-yard par 4, played twice. That makes the test *better*, not worse: 40 samples per 20 rounds rather than 20.
+
+---
+
+## Session — 2026-07-25 (cont.) — Hole Ratings halved to nine
+
+Paul had spotted the same thing independently: the chart drew 18 bars for a nine-hole course.
+
+`buildAnalytics()`'s hole-ratings block now pools both loops onto the physical hole — 9 bars, each backed by 40 plays across 20 rounds instead of 20.
+
+**Detected, not hardcoded.** It checks whether the back nine's pars match the front nine hole for hole; only then does it treat the round as a double loop and key on `((holeNum - 1) % 9) + 1`. An 18-hole course added later charts all 18 with no change here. Falls back to whatever `holeNum` range actually exists, so a nine-hole-only session doesn't break it.
+
+Each entry now also carries `par` and `plays` alongside `avgOverPar` — `plays` in particular is worth surfacing whenever sample size matters to how a number should be read.
+
+`holeRatingBarsHTML()` needed no change; it renders whatever length array it's given. Verified in-browser: 9 bars, labelled 1–9.
+
+```
+hole 1 par 4  40 plays  +1.10        hole 6 par 4  40 plays  +1.25
+hole 2 par 3  40 plays  +0.88        hole 7 par 3  40 plays  +0.93
+hole 3 par 3  40 plays  +0.93        hole 8 par 4  40 plays  +0.90
+hole 4 par 4  40 plays  +1.23        hole 9 par 4  40 plays  +0.95
+hole 5 par 3  40 plays  +1.02
+```
+
+Hole 6 (the 345-yard par 4, stroke index 1) is the hardest by this measure, and hole 4 close behind — which matches the stroke index ranking, a decent sanity check on both.
+
+**Still open:** the front/back comparison is now unavailable in this chart by design. If "do I fade on the second loop?" is ever wanted it needs its own view, not a return to 18 bars.
+
+`index.html` → `?devcb20`.
+
+---
+
+## Session — 2026-07-25 (cont.) — Call Clubhouse in the flyout menu
+
+Fourth item in the slide-out menu, below Settings: **Call Clubhouse**, with the number as a sub-line.
+
+- A real `<a href="tel:">`, not a button — the OS handles dialling, so there's no `preventDefault` and no navigation of the app's own.
+- `href` is normalised to **E.164** (`tel:+12503744653`); a raw `250-374-4653` is dialled inconsistently across platforms. The *displayed* text keeps the human formatting straight from the data file.
+- The number is read from `mt-paul-course-data.json`'s `phone`, never hardcoded, so it travels with the course file. If course data hasn't loaded or carries no number, `clubhousePhone()` returns null and the item is **omitted entirely** rather than rendering a dead link — which also means it does the right thing when a second course is added.
+- The menu closes on a **deferred tick** (`setTimeout(..., 0)`), not synchronously. Re-rendering during event dispatch tears the anchor out of the DOM before the browser acts on it, cancelling the dial on some platforms. Closing it at all means returning from the call drops the player back on the hole they were playing rather than on an open menu.
+- `menu-item-last` moved from Settings to the call item so the bottom border stays on the actual last row.
+- CSS: `a.menu-item` matches the button items exactly (no underline, `box-sizing: border-box`) so the menu reads as one list; `.menu-item-sub` styles the number.
+
+Verified in-browser — four items in order, the call item is an `A` with `href="tel:+12503744653"`, text "Call Clubhouse / 250-374-4653". **Not clicked during testing**, deliberately: it would have tried to place a real call from the dev machine.
+
+`index.html` → `?devcb21`.
+
+### Note
+
+Desktop browsers may do nothing useful with a `tel:` link. This wants a real-device check on the phone the PWA is actually installed on.
+
+**Amended same day:** the number sub-line was removed — the label alone is enough (Paul). `clubhousePhone()` still returns `display` for any future caller that wants the readable form; the now-unused `.menu-item-sub` CSS was deleted rather than left as dead code. `index.html` → `?devcb22`.
+
+**On dialling behaviour:** a `tel:` link never auto-dials. iOS presents a confirmation sheet, Android opens the dialler pre-filled — a deliberate second tap either way, which is the behaviour we want for something reachable mid-round. Still unverified on a real device, and untestable here without placing an actual call to the clubhouse.
+
+---
+
+## Session — 2026-07-25 (cont.) — Weekly charts get the slab treatment
+
+**Working agreement clarified (Paul):** a screenshot he posts is a SPEC — what he expects it to render as on his phone — not a report of current state. Read them as instructions, not bug reports.
+
+`weeklySectionHTML()` rewritten to match Today's Round: `.bar-row.thick` wide slabs (22px → 63px at current width) and the value **above** its bar rather than below. Column order is now `bar-value > bar > bar-label` in all four weekly charts, same as Today's Round.
+
+Three bar states kept deliberately distinct — "didn't play" and "played and scored none" must not collapse into the same shape:
+
+| State | Render | Value |
+|---|---|---|
+| No rounds that week | grey 4px `bar-empty` | — |
+| Played, none scored | 3px `bar-zero` baseline, flat top corners | 0 |
+| Otherwise | proportional slab, min 6px | count |
+
+The `bar-new` grow-in animation on the newest week is preserved.
+
+Verified: all four charts thick, values centred over their bars (0px offset), the Birdies zero week rendering at 3px against 40/40/100px neighbours.
+
+Left narrow deliberately: **Handicap Index** (8 differentials) and **Hole Ratings** (9 holes) are `.bar-row.scroll` — slabs would not fit and these were not in the spec screenshots.
+
+`index.html` → `?devcb23`.
+
+---
+
+## Session — 2026-07-25 (cont.) — 20-round sections pulled out of the render
+
+Handicap Index, 20 Round Average, Hole Ratings and Scrambling & Putting removed from the Analytics page. All four are 20-round stats and belong further down than the weekly charts; their position and presentation are still being designed.
+
+**Built but not rendered, not deleted.** The four `const` blocks that assemble them are untouched — only the return statement changed:
+
+```js
+return todaysStats + weeklyTrends + membershipRoi;
+```
+
+Restoring any of them is a matter of dropping it back into that return in the right order. Nothing needs rebuilding, and none of the `stats.js` computation was touched, so `a.handicap`, `a.holeRatings`, `a.scrambling` etc. all still exist and stay correct.
+
+Analytics now renders:
+
+```
+Today's Round
+Birdies Each Week
+Pars Each Week
+Bogeys Each Week
+Bogey+ Each Week
+Membership ROI
+```
+
+Membership ROI left in place — it sits below the weekly charts and was outside the range Paul specified ("down to but not including Weekly bar charts").
+
+`index.html` → `?devcb24`.
+
+---
+
+## Session — 2026-07-25 (cont.) — Last 10 Rounds + Membership ROI rebuilt
+
+### Last 10 Rounds
+
+New section between the weekly charts and Membership ROI. Actual Score per round, oldest left, most recent right, with the caption "Last 10 rounds, most recent on the right." Gated on **10 logged rounds** (`lastTenVisible`).
+
+Deliberately the **Actual Score** — not adjusted, not net. This is the "what have I been shooting lately" read, and it's the number written on the card.
+
+Bars scale to the highest score in the window, so ten rounds within a few strokes of each other sit at near-level heights **by design**: the numbers above carry the detail, the bars carry the shape. Matches the spec screenshot.
+
+New CSS case: `.bar-row.thick.scroll`. Slabs can't be `1fr` inside a horizontal scroller (they collapse), so the column takes a fixed 58px with a 52px bar and the row overflows.
+
+### RTD is not rounds-history.length
+
+New `roundsToDate(roundsHistory, settings)` in `stats.js`, and `roundsToDate` on the settings record. Rounds played **on the membership** can predate the app, and every one counts toward getting value from the fee — so `settings.roundsToDate` is authoritative when set, with logged rounds only as the fallback.
+
+`saveSetup()` preserves the value across a save; there is no Settings input for it yet, so without that a save would wipe it.
+
+### Membership ROI rebuilt to spec
+
+Now five rows from the screenshot plus the savings line that was already there:
+
+```
+Membership              $1,450
+Green Fee - 18 Holes    $45
+Break Even              33 Rounds
+Rounds Played           48
+Per Round Cost to Date  $30.21
+Saved So Far            $710.00
+```
+
+`perRoundCostToDate` is new — the fee spread over rounds played. It's the number that actually answers "is this paying off", because it falls with every round and crosses under the green fee at break-even. Verified: 1450/45 → 33 rounds to break even; 1450/48 = $30.21; 48 × 45 − 1450 = $710 saved.
+
+Confirmed available from init — it renders whenever `membershipFee` and `greenFee` are both set, with no round-count gate (Paul: "Membership ROI can be shown anytime after Init").
+
+### Seeded test values
+
+`TEST_MEMBERSHIP = { membershipFee: 1450, greenFee: 45, roundsToDate: 48 }` written into settings by `loadTestData()` alongside the rounds. Part of the temporary testing block; comes out with the rest.
+
+Note the deliberate mismatch: 48 RTD against 20 logged rounds. That is the point — it exercises the fallback logic and reflects a real member's situation.
+
+### Current page
+
+```
+Today's Round
+Birdies / Pars / Bogeys / Bogey+ Each Week
+Last 10 Rounds
+Membership ROI
+```
+
+`index.html` → `?devcb25`.
+
+**Amended same day — ROI to spec, RTD unified, seed corrected to 54.**
+
+The earlier mismatch was one input: seeded at 48, Paul's spec screenshot computed at 54. Seed corrected; every figure follows.
+
+Three additions from the screenshot:
+
+- **`Today's Savings`** — new in `membershipROI()`: `greenFee − perRoundCostToDate`. What this round was worth versus a non-member paying at the gate. Negative before break-even, since each round still costs more than a green fee until then.
+- **`Savings to Date`** (was "Saved So Far"), and the negative case now renders as a signed value rather than swapping to a "Behind By" label.
+- **Money drops trailing `.00`** — `$1,450` and `$980` read as figures, `$1,450.00` reads as an invoice. Cents appear only when there are cents.
+- **A rule after Rounds Played** (`tr.stat-row-group`) splitting what the membership COSTS from what it has RETURNED.
+
+Renders exactly as specced:
+
+```
+Membership              $1,450
+Green Fee - 18 Holes    $45
+Break Even              33 Rounds
+Rounds Played           54
+———————————————————————————————
+Per Round Cost to Date  $26.85
+Today's Savings         $18.15
+Savings to Date         $980
+```
+
+**RTD unified.** The Today's Round tile was reading `roundsCount` (20 logged) while ROI read `roundsToDate` (54 on the membership) — one acronym, two numbers, which is precisely the near-duplicate terminology this screen is meant to avoid. The tile now reads `roundsToDate` too. Both show 54.
+
+`index.html` → `?devcb27`.
+
+---
+
+## Session — 2026-07-25 (cont.) — Membership season, renewal calendar, ROI gate
+
+### Season = calendar year, and no year is ever hardcoded
+
+`MEMBERSHIP_CALENDAR` holds month/day constants only — season 1 Jan–31 Dec, early bird 15–30 Nov, dues by 15 Mar of the following year. Every helper derives the year from the date it is given (defaulting to now), so **the app never needs an annual update**:
+
+- `seasonYear(now)` / `seasonOfRound(round)`
+- `roundsInSeason(history, year)`
+- `membershipDatesFor(year)` — returns that year's actual dates; `duesDueBy` deliberately lands in `year + 1`
+- `membershipPhase(now)` — `'in-season'` | `'early-bird'` | `'renewal-due'`
+
+Verified across the cycle: 25 Jul → in-season, 20 Nov → early-bird, 5 Dec → renewal-due, 1 Feb → renewal-due, 1 Apr → in-season.
+
+Taking a date argument rather than reading the clock internally also means these are testable at any point in the calendar without faking a global clock.
+
+`season` and `phase` are returned on the `roi` object but **not rendered** — available whenever Paul wants them on screen.
+
+### RTD is now per season
+
+`roundsToDate()` counts rounds **in the current season**, because the membership resets 31 December — last year's rounds did nothing for this year's fee. At install that's 0, and the first round posted makes it 1, which is what Paul asked for.
+
+`settings.roundsToDate` still overrides when set. Two legitimate uses: seeding hypothetical figures while the report is built, and members installing mid-season with rounds already behind them.
+
+Season filtering verified: a history of 8 rounds spanning 2025 and 2026 reports 3 for this season, and ROI counts 3, not 8.
+
+### The fee gate was already correct
+
+`membershipROI()` returns null unless **both** `membershipFee` and `greenFee` are present and > 0, and `renderAnalytics()` shows a prompt instead of the table when it's null. Confirmed: fee alone → null, green fee alone → null, neither → null, both → renders. No change needed.
+
+### Math checked across the whole curve
+
+```
+                        played   perRound     today      toDate
+0 rounds (init)             0        —          —        -$1450
+1 round                     1    $1450.00   -$1405.00    -$1405
+10 rounds                  10     $145.00    -$100.00    -$1000
+20 rounds                  20      $72.50     -$27.50     -$550
+33 rounds (break-even)     33      $43.94      +$1.06       +$35
+```
+
+Per-round cost crosses under the $45 green fee at exactly round 33 — the same round both savings figures turn positive. Break-even agrees three independent ways. `perRoundCostToDate` and `todaysSavings` are null (rendered as —) at zero rounds rather than dividing by zero.
+
+`index.html` → `?devcb28`.
+
+---
+
+## Session — 2026-07-25 (cont.) — Per-season fees, year captured silently
+
+Fees change from year to year, so a single `membershipFee` / `greenFee` pair can only ever be right for one season. Now keyed by calendar year:
+
+```json
+"seasons": {
+  "2025": { "membershipFee": 1400, "greenFee": 42, "roundsToDate": 40 },
+  "2026": { "membershipFee": 1450, "greenFee": 45, "roundsToDate": 54 }
+}
+```
+
+**The year is captured silently.** `saveSetup()` stamps `seasonYear()` from the clock when fees are saved — the player is asked what they paid, never which year it belongs to, and never sees a year picker. A past season keeps the fees it was actually charged, so its ROI stays correct forever rather than being retroactively recomputed at this year's rates.
+
+New in `stats.js`:
+
+- `seasonSettings(settings, year)` — that year's fees, falling back to the flat top-level fields
+- `withSeasonSettings(settings, values, now)` — returns a NEW settings object with the year stamped; never mutates
+- `knownSeasons(history, settings)` — every year with fee data or logged rounds, newest first
+- `membershipROI(history, settings, now)` — `now` selects the season; pass a date in any year to get that year's ROI from that year's fees
+
+**No migration needed.** A settings record saved before this has no `seasons` key and falls back to the flat fields, so it keeps working unchanged; the first save after this files those values under the current year. Verified: a legacy `{membershipFee, greenFee}` record still produces a valid ROI.
+
+Verified across two seasons from one settings object:
+
+```
+2025 -> fee 1400  green 42  played 40  perRound $35.00  breakEven 34
+2026 -> fee 1450  green 45  played 54  perRound $26.85  breakEven 33
+```
+
+Same code path, different year in, different (correct) figures out.
+
+`index.html` → `?devcb29`.
+
+### Design notes carried from the conversation, not yet built
+
+- **Off-season rounds are a tally, not rounds.** No score, no stats, no date beyond the year. Storing them as round records would mean every future aggregation has to remember to exclude them; a per-season counter is invisible to everything except the ROI calculation that wants it. Also removes the need for an Off Season *mode* — no toggle to forget, no winter colour scheme, no disabled Stats Console.
+- **WHS Rule 2.1 settles the handicap question:** winter scores are not acceptable for handicap purposes — the course fails both "length and normal playing difficulty maintained at a consistent level" (fairway greens, mats, reduced yardages) and "during its active season". Not a preference; mandatory.
+- **Two seasons that do not coincide.** Membership season = calendar year, drives ROI, winter rounds count. Active season ≈ Apr 15–Oct 15, drives handicap acceptability, winter rounds don't count. November and December sit inside one and outside the other. Conflating them would silently corrupt the Index.
+- **Early-bird consequence:** paying 15–30 Nov buys the *following* year, with the balance of the current year free. Under a strict calendar rule those free rounds fall in the OLD year, inflating its rounds played and dropping its per-round cost. Correct, but will look like a bug in December if unexplained.
+
+---
+
+## Session — 2026-07-25 (cont.) — Dated green fee schedule; renewal code removed
+
+### The problem
+
+A season held one green fee. Editing it in July silently restated every round back to January at the new rate — savings for April would change, invisibly, long after the fact.
+
+Paul's call: capture the full date a rate change takes effect, and don't let it touch prior rounds in the same year.
+
+### Dated rate schedule
+
+```json
+"2026": {
+  "membershipFee": 1450,
+  "greenFee": 50,
+  "greenFees": [ { "from": "2026-01-01", "amount": 45 },
+                 { "from": "2026-07-01", "amount": 50 } ],
+  "roundsToDate": 54
+}
+```
+
+New in `stats.js`: `greenFeeSchedule()`, `greenFeeOn(date)`, `currentGreenFee()`, `withGreenFeeChange(settings, amount, from)`. `greenFee` mirrors the latest rate so the legacy flat field stays truthful.
+
+**The ledger now sums per round**, each valued at the rate in effect the day it was played, rather than count × one rate. Verified — 20 rounds at $45 then 10 at $50 against a $1,450 fee:
+
+```
+gross  $1,400   (20x45 + 10x50)
+saved  -$50
+```
+
+A single-rate calculation at today's $50 would have claimed $50 saved — **$100 out**, and wrong in the flattering direction.
+
+Two figures deliberately still use today's rate, because they look forward rather than back: **break-even** ("at what it costs now, how many rounds repays the fee") and **Today's Savings**.
+
+**Membership fee needs no schedule** — it's paid once for the season, so a change belongs in the next season's bucket, not at a date inside this one.
+
+**Unlogged rounds:** RTD can exceed logged rounds (seeded figures, or installing mid-season). Those have no date to price against, so they're valued at the current rate. `unloggedCount` is returned so the approximation can be shown rather than hidden.
+
+### Where the edit happens
+
+Settings, same field as always. Saving a green fee that differs from the rate currently in effect records a **rate change effective today**; earlier rates stay put. Re-saving Settings with an unchanged fee records nothing, so it can't stack duplicates.
+
+### Timezone bug found and fixed
+
+`new Date('2026-01-01')` parses as **UTC midnight**, which is 31 December local anywhere west of Greenwich — so `seasonYear()` returned 2025 and a 1 January rate was filed under the wrong season. Caught because the first rate vanished from the schedule.
+
+Bare `YYYY-MM-DD` values are calendar dates, not instants. `parseCalendarDate()` now reads them as local midnight and `toCalendarDate()` formats from local parts rather than via `toISOString()`, which shifts the same way. Both exported.
+
+Round dates keep full ISO timestamps and are still read in local time — a round at 02:00 UTC on 1 January was genuinely played on 31 December locally, and should count to that season.
+
+### Renewal code removed
+
+Paul: renewal timing has no bearing on stats or the savings ledger — the club is paid either way. `membershipPhase()` and the early-bird / dues-by constants are gone. `seasonYear()`, `seasonOfRound()` and `roundsInSeason()` remain, which is all the ROI needs.
+
+`index.html` → `?devcb30`.
+
+---
+
+## Session — 2026-07-25 (cont.) — Off-season rounds as a tally
+
+### Why they exist and why they aren't rounds
+
+Winter golf at Mt. Paul is played to fairway greens off artificial mats at significantly reduced yardages. WHS Rule 2.1 makes those scores unacceptable for handicap on two counts — the course no longer maintains "length and normal playing difficulty at a consistent level", and it's outside its active season. No score worth keeping, no stats worth keeping.
+
+But the rounds happened and the membership covered them. **Mt. Paul charges full green fee year round** (Paul — no winter rate, "shitty conditions or optimal, same price"), so a winter round saves exactly as much as a July one. They belong in the ledger.
+
+Stored as a **tally, not round records**:
+
+```json
+"offSeasonRounds": { "2026-11": 3, "2026-12": 2, "2027-01": 4 }
+```
+
+A record with no score would have to be excluded by hand from every aggregation in the app — including ones not written yet, which is where it would eventually be forgotten. A tally is invisible to all of them and reachable only where explicitly summed.
+
+**Keyed by year-month**, because off-season play straddles 31 December: November and December belong to one membership season, January onward to the next. A bare counter can't split them. The month also prices each round at the fee in effect then, if a rate ever moves mid-winter.
+
+### New in stats.js
+
+`offSeasonTally()`, `offSeasonRoundsInSeason()`, `offSeasonValue()`, `withOffSeasonRounds()`.
+
+`roundsToDate()` now includes them — they *are* rounds to date, and RTD has to mean one number in both the Today's Round tile and the ROI table. They're added on top of a seeded figure too, since the seed stands in for logged rounds, not for the winter tally.
+
+The ledger prices them by month and excludes them from the "unlogged remainder" that gets valued at the current rate, so nothing is counted twice.
+
+### Verified
+
+Ledger arithmetic — 30 logged + 5 off-season at $45 against a $1,450 fee:
+
+```
+rounds played  35
+gross          $1,575   (35 x 45)
+saved            $125
+off-season worth $225   unlogged remainder 0
+```
+
+And the isolation promise, comparing `buildAnalytics()` with and without a 5-round tally:
+
+```
+handicap            20  ->  20      unchanged
+holeRatings         9   ->  9       unchanged
+hole 6 avgOverPar   1.250 -> 1.250  unchanged
+lastTen length      10  ->  10      unchanged
+today's score/net   77/67 -> 77/67  unchanged
+weekly birdies      5   ->  5       unchanged
+roundsCount         20  ->  20      unchanged
+--------------------------------------------
+roi.roundsPlayed    20  ->  25      changed
+roi.savings       -$550 -> -$325    changed
+```
+
+Every stat untouched; only the ledger moves. That is the whole point of the tally.
+
+### Still to do
+
+No Settings input yet — the tally can only be written programmatically. Entry would be a month and a count ("November: 3"). Paul hasn't specced that screen.
+
+`index.html` unchanged at `?devcb31` (no render changes).
+
+---
+
+## Ruling — 2026-07-25 — What actually disqualifies a round (checked, not assumed)
+
+Settled after Paul asked whether punched greens should stop stats being logged. They should not, and the distinction matters enough to record.
+
+**Aerated / punched greens — KEEP LOGGING.** These are the actual rated greens with holes punched in them. Bumpy and slow, but nothing has been substituted, so it's still the surface the course was rated on. There is **no threshold** for aeration — all nine punched at once changes nothing. Treating aeration as off-season would throw away a couple of weeks of good data every spring and autumn.
+
+**Temporary greens + shortened yardages — DOES NOT COUNT.** GB&I guidance caps this at no more than two temporary greens on an 18-hole course, **one on a nine-hole course**. Mt. Paul's winter setup uses fairway greens on all nine, so it isn't close. Separately, where temporary greens or tees change the course by more than 50 yards over nine holes, Course Rating and Slope adjustments must be applied under Appendix G — Mt. Paul's winter yardages are well past that too. (Thresholds are national-association interpretations; Golf Canada's figures may differ, the principle won't.)
+
+**Automatic two-putt — DOES NOT COUNT, on its own.** "The use of an 'automatic two-putt' is not acceptable for handicap purposes"; a player must hole out. Mt. Paul caps winter putts at 2, so winter rounds fail on this ground *independently* of the fairway greens. Two separate reasons, either sufficient.
+
+**Everything else still counts:** frost, wind, mud, casual water, poor form. The only remaining escape is the Handicap Committee formally suspending posting.
+
+### Consequence for the off-season toggle
+
+"Off" must be defined as **structural change to what is being played** — temporary greens, mats, automatic two-putt — not as *poor conditions*. Aeration explicitly does not flip it.
+
+Paul's direction on the mechanism: a user-controlled **on | off** setting, simplest possible. Guard against forgetting to switch back proposed as **asymmetric friction** — off-season is the dangerous state (rounds silently stop counting), so only that state prompts: starting a round while it's on asks "Still winter rules?" once. In-season never prompts, so normal play stays frictionless. Combined with snapshotting the flag onto each round, a forgotten toggle costs one round, caught at the next tee, rather than a corrupted season.
+
+Not yet built — no Settings control, and the interaction between the toggle and the existing `offSeasonRounds` tally still needs deciding (a round played *with* the app while off-season is on, versus rounds added after the fact with the phone left at home).
+
+Sources: R&A Rules of Handicapping Rule 2 and its Interpretations; USGA "Spring Primer on Rules, Course Care and Handicapping"; GB&I Guidance on the WHS Rules of Handicapping v2.0.
+
+---
+
+## Session — 2026-07-25 (cont.) — Off-season rounds entry built
+
+Entry lives inside the Membership ROI section — the only place these rounds are used, so the only place they're entered.
+
+### Definitions settled (Paul)
+
+- **Live Rounds** — entered during normal play under optimal conditions, with stats. Go to `rounds-history`, feed everything.
+- **Off Season Rounds** — count strictly for the Membership ledger, never cross into Analytics. Not live rounds; no score, no stats, no record.
+
+### Steppers, not an Add button
+
+This is the whole design, and it's the answer to "how do we prevent dual entries?"
+
+The number on screen **is** the number stored. Open it in February and January's session is showing you what it recorded. Remembering December was really three, you change the 1 to a 3 — you don't add 2 to a hidden total. There is no "add" operation, so there's nothing to perform twice, and a correction is the same gesture as an entry.
+
+An Add button would store *transactions* ("added 3 in Jan, 2 in Feb"), leaving the current total invisible and "did I already enter December?" unanswerable without recalling what you did last time. That's the exact failure this replaces. Dates within a month never come into it — a month is enough to know the season and the green fee.
+
+Verified end to end, simulating Paul's own two-session scenario:
+
+```
+January session         February session (Dec corrected 1 -> 3, Feb added)
+Oct 2025   3            Oct 2025   3
+Nov 2025   2            Nov 2025   2
+Dec 2025   1            Dec 2025   3
+Jan 2026   0            Jan 2026   0
+Feb 2026   0            Feb 2026   1
+2025 season 6           2025 season 8
+2026 season 0           2026 season 1
+```
+
+Stored: `{"2025-10":3,"2025-11":2,"2025-12":3,"2026-02":1}` — state, not a log of edits.
+
+### The Logged column
+
+Second guard against double counting. October and March sit in the winter window but are also months a proper round may well have been played and captured live. Showing what the app already has stops the same round being tallied on top of itself — the stepper is explicitly labelled **Not logged**.
+
+### Winter span, self-maintaining
+
+Six rows, October to March, derived entirely from today via `winterMonthsFor()`: Oct–Dec looks forward into the winter now starting, Jan–Mar back at the one that started last October, Apr–Sep shows the winter just finished (the "forgot until May" case). Months not yet reached are held back — you can't log a round you haven't played.
+
+No year is stored anywhere. `Nov 2026` is the label; `2026-11` is the key that files it; the ROI sums by the year part. One source, so the label can never disagree with which season the rounds landed in — and every winter straddles two, which is why each row carries its year and the totals are shown per season.
+
+### Files
+
+`js/stats.js` — `winterMonthsFor()`, `loggedRoundsByMonth()`, `offSeason` on the analytics object.
+`js/app.js` — `offSeasonTableHTML()`, stepper handlers writing the new total (not a delta), scroll position preserved across the re-render since the table sits low on a long screen.
+`css/styles.css` — `.os-*` rules.
+
+`index.html` → `?devcb32`.
+
+**Amended same day — Paul's revisions to the off-season table.**
+
+- **Typography now matches the ROI rows.** Uses `.stat-table` directly — 14px, muted label left, bold figure right — so the two tables read as one section rather than the entry control looking bolted on. The "n logged" guard moved inline with the month instead of taking its own column.
+- **Fine print enlarged.** Chart captions and notes (`.report-note`, `.os-note`) went 13–14px light → 15px/600; `.bar-label` 12px → 14px; the inline "logged" note 12px at 75% opacity → 13px at full. Paul: "too fine, too small."
+- **Season subtotal rows removed.**
+- **Table hidden outside winter**, now defined as **1 October – 31 March** (`isWinter()`, `WINTER_MONTHS`). Outside that the previous winter is settled and there is nothing relevant to edit, so six spent months in July are just clutter. The tally itself keeps counting toward the ledger year round — only the entry table hides.
+
+Verified in-browser, clock stubbed to test the winter case:
+
+```
+July 2026      table absent
+February 2027  Oct 2026 | Nov 2026 | Dec 2026 | Jan 2027 | Feb 2027   (Mar held back as future)
+```
+
+The reach-back across 31 December survives, which is what keeps the "February by the fire, entering last October's rounds" scenario working.
+
+`index.html` → `?devcb35`.
+
+**Note for Paul:** testing left a stale tally in localStorage from the two-session walkthrough (`2025-10:3, 2025-11:2, 2025-12:3, 2026-02:1`). The 2026 entry adds 1 to this season's Rounds Played. Not cleared automatically since it lives in settings rather than the test-data block — worth zeroing when convenient, or it'll quietly sit in the ledger.
+
+---
+
+## Session close — 2026-07-25 — State of play
+
+### Parked for next session
+
+- **Move Membership & Green Fees out of Setup** (Paul's closing thought — "maybe. Talk later."). Related to the dedicated **Membership page** idea: fees, dated rate history, off-season entry and the ROI itself are now a lot of machinery for a section that began as an afterthought on a golf-stats screen. Setup would shed two fields; Analytics would shed the ledger.
+- **20-round sections** — Handicap Index, 20 Round Average, Hole Ratings, Scrambling & Putting are built and correct but not rendered. Restoring any is one line in `renderAnalytics()`'s return. Position and presentation still being designed, working top-down.
+- **Weekly rolling window at 20 rounds** — keep lower down, drop, or collapse. Undecided pending Paul's review.
+- **Early gating ladder** — proposed thresholds (Hole Ratings and Scrambling until 5 rounds, Best/Worst and Score Distribution until 3) put to Paul and deferred.
+- **Off-season toggle vs tally** — resolved in favour of the tally; no toggle built, and none needed.
+- **Stale test tally** in localStorage from the two-session walkthrough (`2025-10:3, 2025-11:2, 2025-12:3, 2026-02:1`); the 2026 entry adds 1 to this season's Rounds Played.
+
+### Current state
+
+Analytics renders: Today's Round → weekly charts → Last 10 Rounds → Membership ROI (with off-season entry, winter only).
+
+`sw.js` at `bogey-v5`; `index.html` at `?devcb35` (CSS and JS on the same token — bump both together, now load-bearing since the SW matches with `ignoreSearch`). `wip/whs-test.mjs` 72/72.
+
+**Nothing in this session was verified on a real device.** Steppers are 32px, the hero/tile ratio is untested at phone width, and the `tel:` link has never been tapped. All three want a look on the phone.

@@ -8,7 +8,13 @@ export const KEYS = {
   ROUNDS_HISTORY: 'rounds-history',
   // Pass 4 — Weekly Reveal grow-in animation tracking only (js/stats.js
   // getLastAnimatedWeekStart/markWeekAnimated). Never holds score/stat data.
-  WEEKLY_ANIM_SEEN: 'weekly-anim-week-seen'
+  WEEKLY_ANIM_SEEN: 'weekly-anim-week-seen',
+  // TEMPORARY (2026-07-24) — holds Paul's real rounds-history, if any, while
+  // the disposable Analytics test dataset (Settings > Testing) is loaded in
+  // its place. Remove this key alongside the rest of that testing block
+  // (see app.js's generateTestRounds/loadTestData/clearTestData) once
+  // Analytics work is done — nothing here is meant to ship.
+  ROUNDS_HISTORY_TEST_BACKUP: 'rounds-history-test-backup'
 };
 
 export function readJSON(key, fallback = null) {

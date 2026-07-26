@@ -11,7 +11,7 @@
 // hosted on GitHub Pages under a repo subpath, not domain root — see
 // manifest.json's start_url/scope for the same concern.
 
-const CACHE_NAME = 'bogey-v4'; // bumped in Pass 6 (hamburger menu + Front 9 Score screen + Back/Next on every hole + scorecard cell styling touched js/app.js; toggle/rocker-pill track color + logo-black-in-light-mode + scorecard cell styling + menu overlay touched css/styles.css; new assets/09-Score-Card.png added to precache)
+const CACHE_NAME = 'bogey-v5'; // bumped 2026-07-25 (Analytics/handicap pass): js/stats.js rewritten to WHS Rules of Handicapping — net double bogey (3.1b), par+5 before an Index exists (3.1a), Rule 5.2a fewer-than-20 table, 0.96 multiplier removed, 54.0 cap, FIR denominator now fairways available not holes played, men's/ladies' rating sets; js/app.js Settings gains the Ratings switch + rating-set restamp prompt and captures si/ratingSet onto rounds; js/course-data.js adds getStrokeIndex(); js/round-record.js + js/settings-record.js carry the new fields; index.html cache-buster at ?devcb12
 
 const PRECACHE_URLS = [
   './',
@@ -94,7 +94,19 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   event.respondWith(
-    caches.match(req).then((cached) => {
+    // ignoreSearch (2026-07-25): index.html requests `js/app.js?devcbN` and
+    // `css/styles.css?devcbN`, but PRECACHE_URLS lists them unversioned. Without
+    // this those two entries — the most important files in the app — could never
+    // match, so every load fell through to the network and the precache was
+    // doing nothing for them. Safe here because every same-origin GET this SW
+    // handles is a static asset whose query string is only ever a cache-buster;
+    // nothing is parameterised by search string.
+    //
+    // Staleness is still governed by CACHE_NAME: bumping it discards the old
+    // cache and refetches PRECACHE_URLS, which is already the standing rule for
+    // any change to a precached file. Bumping devcbN WITHOUT bumping CACHE_NAME
+    // would now serve the old file — so bump both, or neither.
+    caches.match(req, { ignoreSearch: true }).then((cached) => {
       if (cached) return cached;
       return fetch(req)
         .then((res) => {

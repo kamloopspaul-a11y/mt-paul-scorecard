@@ -4,16 +4,33 @@
 // Stored under one localStorage key, e.g. 'mtpaul-settings', read/written whole.
 
 export function buildSettingsRecord({
-  playerName, teePref, statsTrackingEnabled, lightMode,
-  membershipFee, greenFee
+  playerName, teePref, ratingSet, statsTrackingEnabled, lightMode,
+  membershipFee, greenFee, roundsToDate, seasons
 }) {
   return {
     playerName,                 // string
     teePref,                    // 'blue' | 'red'
+    // Which published Course Rating / Slope set applies (2026-07-25). Mt. Paul
+    // rates both Blue and Red for men and ladies off the SAME physical tees —
+    // only CR/Slope differ, the stroke index table is shared. This is a golf
+    // question (which rating set the player is scored under), not a personal
+    // one, which is why the Settings switch is labelled "Ratings".
+    ratingSet,                  // 'male' | 'female' — defaults to 'male'
     statsTrackingEnabled,       // boolean — Setup's Show/Hide Stats toggle
     lightMode,                  // boolean — Dark/Light mode switch
     membershipFee,              // number, dollars — Membership ROI input
-    greenFee                    // number, dollars — Membership ROI input
+    greenFee,                   // number, dollars — Membership ROI input
+    // Rounds played on the current membership. NOT rounds-history.length —
+    // rounds can predate the app, and they all count toward getting value from
+    // the fee. stats.js roundsToDate() prefers this when set and falls back to
+    // logged rounds when it isn't.
+    roundsToDate,
+    // Per-season fees, keyed by calendar year and stamped silently on save:
+    //   seasons: { "2026": { membershipFee, greenFee, roundsToDate }, ... }
+    // Fees vary year to year, so the flat fields above can only ever be right
+    // for the season they were last entered in — they remain as a fallback for
+    // records saved before this existed. stats.js seasonSettings() reads this.
+    seasons
   };
 }
 

@@ -38,6 +38,17 @@ export function getPar(courseData, tee, holeNum) {
   return hole ? hole.par : null;
 }
 
+// Stroke index (1 = hardest) for a single hole number on a given tee. Captured
+// onto every hole record at play time so net double bogey (WHS Rule 3.1b) can
+// be computed from the round itself rather than from a course file that may
+// since have changed — or, once other courses are added, may not describe the
+// course this round was even played on.
+export function getStrokeIndex(courseData, tee, holeNum) {
+  const holes = getHolesForTee(courseData, tee);
+  const hole = holes.find((h) => h.holeNum === holeNum);
+  return hole && typeof hole.index === 'number' ? hole.index : null;
+}
+
 // Course-level metadata needed for handicap-related calcs later (Pass 2+).
 export function getTeeMeta(courseData, tee) {
   const teeName = tee === 'red' ? 'Red' : 'Blue';

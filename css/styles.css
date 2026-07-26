@@ -8,10 +8,23 @@
 :root {
   --cta-start: #8C2E39;
   --cta-end: #5C1620;
+  /* Pass 7 (2026-07-24): named to match Design Handoff's --gradient-cta
+     token exactly. .btn already used this literal gradient inline; the
+     scorecard's header row was using a flat --cta-end instead of the
+     gradient it's actually specced to use (see .scorecard thead below). */
+  --gradient-cta: linear-gradient(160deg, var(--cta-start), var(--cta-end));
   --bg: #F4EFE3;
   --ink: #1C1C1C;
   --ink-muted: #6b6459;
   --line: #d8d0bf;
+  /* Pass 7 (2026-07-24): the scorecard table's own outer stroke — per
+     Design Handoff's literal appCardBorder token value (rgba(0,0,0,.5)),
+     confirmed by Paul as fixed at 50% regardless of mode — consistent with
+     the rest of the scorecard (header/Par/Score rows) also not inverting
+     for Dark Mode. An earlier pass here used a lighter, mode-flipping
+     value based on a verbal description before this was confirmed against
+     the actual token; that was wrong, this is the corrected single value. */
+  --card-border: 1px solid rgba(0,0,0,.5);
   --card-bg: #ffffff;
   --danger: #8C2E39;
   --blue-tee: #2F6DB5;
@@ -25,6 +38,8 @@
   --font-marquee: 'Bebas Neue', Impact, "Arial Narrow Bold", var(--font);
   --font-ui: 'Hanken Grotesk', var(--font);
   --font-mono: 'Spline Sans Mono', 'SFMono-Regular', Consolas, monospace;
+  /* Pass 7: Start Round screen's italic quote block. */
+  --font-editorial: 'Spectral', Georgia, serif;
   /* Pass 6 Fix 1: the horizontal switches' knob on/off colors, duplicated
      from js/stats-defaults.js's TOGGLE_ON_GRADIENT / TOGGLE_OFF_GRADIENT /
      TOGGLE_ON_SHADOW / TOGGLE_OFF_SHADOW exports (plain CSS can't import a JS
@@ -69,19 +84,68 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  padding: 20px 24px 24px;
+  padding: 20px 26px 32px;
   /* Pass 5 bug fix: index.html's viewport meta already sets
      viewport-fit=cover (so the app can draw under the iOS notch/home
      indicator), but nothing here actually consumed env(safe-area-inset-*) —
      on a notched/home-indicator phone the bottom-pinned Save/Next/Play
      buttons (and Home's Reports/Settings links) could sit flush against, or
      be partially covered by, the home-indicator gesture area. max() keeps
-     the existing 24px on non-notched devices and grows only where a real
-     inset is reported. */
+     the base padding on non-notched devices and grows only where a real
+     inset is reported.
+     Pass 7: sides bumped 24->26 and bottom 24->32 to match the nav row's
+     spec ("26px left/right, 32px bottom, same position on every screen") —
+     applied at the .screen level, not just around the button row, since
+     Paul confirmed this position holds across every screen alike.
+     Pass 7 (2026-07-24): position:relative added as a baseline so any
+     screen's absolutely-positioned children (see .screen.pinned-nav below)
+     resolve against this box, not #app or the viewport — harmless for
+     screens that don't use it (Reports/Setup/Onboarding keep scrolling the
+     normal page-level way). */
   padding-top: max(20px, env(safe-area-inset-top));
-  padding-left: max(24px, env(safe-area-inset-left));
-  padding-right: max(24px, env(safe-area-inset-right));
-  padding-bottom: max(24px, env(safe-area-inset-bottom));
+  padding-left: max(26px, env(safe-area-inset-left));
+  padding-right: max(26px, env(safe-area-inset-right));
+  padding-bottom: max(32px, env(safe-area-inset-bottom));
+  position: relative;
+}
+
+/* Pass 7 (2026-07-24): Start Round, Hole, Final Score, and Front 9 Score
+   all share the same bottom-locked nav row (.nav-row) sitting under a fixed
+   294px photo/scorecard image. Earlier this pass tried locking just the nav
+   row itself with position:absolute;bottom:32px while leaving .screen at
+   min-height:100vh — that's not enough on its own: min-height only ever
+   grows to fit overflowing content, so on a Hole screen (measured ~835px of
+   real content) it grows past a shorter real device viewport, and
+   position:absolute's `bottom` resolves against THIS box's own edge, not
+   the viewport's — so the nav row ends up 32px above .screen's now-too-tall
+   bottom edge, which is itself below the fold. That's the actual mismatch
+   Paul caught between Hole screens and Scorecard screens (each overflows,
+   if at all, by a different amount).
+   Fix: cap .screen at exactly the viewport height (100vh, not min) and hide
+   its own overflow, so its bottom edge — and therefore .nav-row's bottom:32
+   anchor — is always the true viewport bottom. Everything ABOVE the nav row
+   moves into a .screen-scroll wrapper (flex:1, its own overflow-y:auto) so
+   if a screen's real content genuinely doesn't fit a given device, that
+   content scrolls internally instead of pushing the whole page (and the nav
+   row) down. Scoped to .pinned-nav only — Reports/Setup/Onboarding don't
+   use this pattern and keep relying on ordinary page scroll. */
+.screen.pinned-nav {
+  height: 100vh;
+  /* dvh accounts for mobile browser chrome (address bar) showing/hiding —
+     falls back to the plain 100vh line above on browsers that don't
+     support it; the second declaration simply wins where it's supported. */
+  height: 100dvh;
+  overflow: hidden;
+}
+.screen-scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  /* Clears the absolutely-positioned nav row below (its own ~52px height +
+     a gap) so scrolled content never ends up hidden underneath it. */
+  padding-bottom: 76px;
 }
 
 .hidden { display: none !important; }
@@ -117,7 +181,7 @@ h2, h3 {
 /* Mt. Paul Golf Course wordmark (Design-Screens/02-setup.png etc. show the
    real club logo graphic in the topbar, not plain text) — see assets/Logos. */
 .brand-logo {
-  height: 34px;
+  height: 52px;
   width: auto;
   display: block;
 }
@@ -157,7 +221,7 @@ body:not(.dark-mode) .brand-logo {
   text-align: center;
   cursor: pointer;
   color: #fff;
-  background: linear-gradient(160deg, var(--cta-start), var(--cta-end));
+  background: var(--gradient-cta);
   box-shadow: 0 4px 10px rgba(0,0,0,.25);
 }
 
@@ -195,6 +259,21 @@ body:not(.dark-mode) .brand-logo {
 }
 .btn-row .btn { flex: 1; }
 
+/* Pass 7: Back/Next nav row (Hole screens, Front 9 Score, Final Score).
+   Both buttons are equal-width CTA-gradient fills — Back was wrongly using
+   .btn.secondary's white/outline treatment; per spec there's no visual
+   distinction between Back and Next/Play It/Save here. Scoped to .nav-row
+   specifically so Home/Setup/Reports' own .btn-row usage (which does want
+   a primary/secondary contrast, e.g. Play 18 vs Play 9) is untouched. */
+.nav-row {
+  gap: 8px;
+}
+.nav-row .btn {
+  flex: 1;
+  padding: 15px 6px;
+  font-size: 18px;
+}
+
 /* --- Onboarding --- */
 .onboarding-screen {
   padding: 0;
@@ -204,38 +283,51 @@ body:not(.dark-mode) .brand-logo {
   min-height: 100vh;
 }
 .onboarding-title-block {
-  padding: 0 24px 28px;
+  padding: 0 26px 6px;
   text-align: center;
 }
+/* Pass 7: literal sizes from Design Handoff/A Bit of Bogey.dc.html's "Row 01
+   - Onboarding" block — was 64px/26px, spec calls for 112px/61px. */
 .onboarding-title-block h1 {
-  font-size: 64px;
-  line-height: 1;
+  font-size: 112px;
+  line-height: 0.92;
   color: #fff;
-  margin: 2px 0 6px;
+  margin: -6px 0 0;
+  letter-spacing: 0.03em;
 }
 .onboarding-title-block .subtitle {
   font-family: var(--font-marquee);
-  font-size: 26px;
-  color: #e8e8e8;
-  margin-bottom: 4px;
-  letter-spacing: 2px;
+  font-size: 61px;
+  line-height: 0.92;
+  color: #fff;
+  margin: 4px 0 0;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
 }
-/* Faux movie-poster credits block (Design-Screens/01-onboarding.png shows a
-   3-column "Starring.../An...Film/...Director" credit line above Start). */
+/* Faux movie-poster credits block — verbatim grid from the reference: 5
+   explicit columns (3 text + 2 hairline dividers), 2 explicit rows, each
+   credit line stretched vertically (scaleY) for that condensed poster-credit
+   look. Was a 3-column flex layout with the wrong groupings/sizes. */
 .onboarding-credits {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1px auto 1px auto;
+  column-gap: 8px;
+  row-gap: 6px;
   justify-content: center;
-  gap: 18px;
-  margin: 10px 0 20px;
-  font-family: var(--font-marquee);
-  font-size: 10px;
-  line-height: 1.5;
-  letter-spacing: 0.06em;
+  margin: 6px 0 20px;
+}
+.onboarding-credits .credit-line {
+  font: 400 13px var(--font-marquee);
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   color: rgba(255,255,255,.7);
+  white-space: nowrap;
+  transform: scaleY(1.6);
+  transform-origin: center;
 }
-.onboarding-credits div { flex: 1; }
+.onboarding-credits .credit-divider {
+  background: rgba(255,255,255,.7);
+}
 .onboarding-cta { padding: 0 24px max(32px, calc(env(safe-area-inset-bottom) + 12px)); }
 
 /* --- Cards / forms --- */
@@ -323,44 +415,33 @@ body:not(.dark-mode) .brand-logo {
 .switch.tee.state-a .knob { background: var(--blue-tee); left: 3px; box-shadow: none; }
 .switch.tee.state-b .knob { background: var(--red-tee); left: 35px; box-shadow: none; }
 
-/* --- Home --- */
-.home-hero {
-  text-align: center;
-  margin: 24px 0;
+/* Pass 7: Front 9 Score screen's Post Now flow — the spinner is a pure UI
+   delay (the actual save already happened by the time this shows; see
+   postFrontNineNow() in js/app.js), and "Round Saved." replaces it once the
+   delay elapses. Both sit inside .row-toggle.post-status so they line up
+   with the toggle row they're replacing. */
+.spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid rgba(0,0,0,.15);
+  border-top-color: var(--cta-start);
+  animation: spin .8s linear infinite;
 }
-.home-hero h1 { font-size: 30px; }
-.home-hero .player-name { color: var(--ink-muted); text-transform: none; font-weight: 600; margin-top: 4px; }
-
-.pending-card {
-  background: #fff;
-  border: 2px solid var(--cta-start);
-  border-radius: 16px;
-  padding: 16px;
-  margin-bottom: 18px;
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
-.pending-card .pending-title {
-  font-weight: 800;
-  text-transform: uppercase;
-  font-size: 13px;
-  color: var(--cta-end);
-  margin-bottom: 4px;
-}
-.pending-card p { margin: 4px 0 12px; font-size: 14px; color: var(--ink-muted); }
-
-.home-links {
-  margin-top: auto;
-  display: flex;
-  justify-content: space-around;
-  padding-top: 20px;
-}
-.home-links a {
-  color: var(--ink-muted);
-  text-decoration: none;
+.post-confirm {
+  font-family: var(--font-ui);
   font-weight: 700;
   text-transform: uppercase;
-  font-size: 13px;
-  letter-spacing: 1px;
+  letter-spacing: 0.06em;
+  font-size: 15px;
+  color: var(--cta-start);
 }
+
+/* Pass 7: the old Home dashboard (.home-hero/.pending-card/.home-links) is
+   gone — see js/app.js's goToPlayRound() doc comment. */
 
 /* --- Hole screen --- */
 .hole-header { margin-bottom: 6px; }
@@ -385,29 +466,75 @@ body:not(.dark-mode) .brand-logo {
   margin-bottom: 20px;
 }
 
-.score-row {
+/* --- Start Round screen --- */
+.start-round-weather {
+  font: 500 17px var(--font-ui);
+  color: var(--ink);
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 28px;
-  margin: 10px 0 28px;
+  gap: 6px;
+  margin-top: 6px;
+  white-space: nowrap;
+}
+.start-round-date {
+  margin-top: 12px;
+  font: 500 17px var(--font-ui);
+  color: var(--ink-muted);
+}
+.start-round-greeting {
+  margin-top: 12px;
+  font: 400 17px var(--font-ui);
+  color: var(--ink-muted);
+}
+.start-round-quote {
+  margin-top: 56px;
+  font: 300 34px/1.35 var(--font-editorial);
+  font-style: italic;
+  color: var(--ink);
+  text-align: center;
+}
+
+/* Stroke panel: verbatim from Design Handoff/A Bit of Bogey.dc.html
+   (repeated inline on every hole screen, no separate .dc.html component
+   like Stats Counter had). Wrapper positions the panel below the hole
+   title; the panel itself spans full width with the two stepper buttons
+   pinned to its edges and the score value centered between them. */
+.stroke-panel-wrap {
+  padding: 16px 26px 0;
+}
+.stroke-panel {
+  width: 100%;
+  border-radius: 18px;
+  padding: 22px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transform: translateY(-14px);
+  background: transparent;
+}
+body.dark-mode .stroke-panel {
+  background: #0E0E0E;
 }
 .score-btn {
-  width: 64px;
-  height: 64px;
+  width: 52px;
+  height: 52px;
   border-radius: 50%;
   border: none;
   background: linear-gradient(160deg, var(--cta-start), var(--cta-end));
   color: #fff;
-  font-size: 30px;
-  font-weight: 800;
+  font-size: 28px;
+  font-weight: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  box-shadow: 0 4px 10px rgba(0,0,0,.3);
+  box-shadow: 0 3px 6px rgba(0,0,0,.4), inset 0 1.5px 0 rgba(255,255,255,.25), inset 0 -2px 3px rgba(0,0,0,.35);
 }
 .score-value {
   font-family: var(--font-marquee);
-  font-size: 68px;
+  font-size: 72px;
   font-weight: 400;
+  line-height: 1;
   min-width: 70px;
   text-align: center;
 }
@@ -435,18 +562,22 @@ body:not(.dark-mode) .brand-logo {
   grid-template-columns: repeat(5, 1fr);
   align-items: end;
   gap: 8px;
+  width: 100%;
+  max-width: 406px;
   height: 152px;
-  margin-bottom: 24px;
+  margin: 0 0 24px;
 }
-/* Bug fix (Pass 5), still relevant post-rebuild: FIR renders on every hole
-   including par-3s, so the row is always 5 columns, never 4. The new grid
-   layout (equal 1fr columns, 32px pills) has far more headroom than the old
-   flex/46px-pill layout did, but the safeguard stays in place per standing
-   instruction — tightened further only if needed on the narrowest screens. */
-@media (max-width: 360px) {
-  .rockers-row { gap: 4px; height: 140px; }
-  .rocker-lift, .putts-lift { gap: 6px; }
-}
+/* Pass 5 gave FIR a column on every hole, including par-3s, so the row is
+   always 5 columns, never 4. Pass 7 (2026-07-24) reversed that decision —
+   FIR is now visibility:hidden on par-3 holes (see rockerHTML() in
+   js/app.js) — but the row is still always 5 columns: hiding via
+   visibility rather than removing the column keeps GIR/PEN/UD/Putts from
+   shifting left to fill the gap. */
+/* Pass 7: removed the narrow-screen gap override (was 4px row / 6px
+   stack below 360px) — Paul confirmed the console is fixed-size (406x152)
+   on every hole screen, so gaps stay at the literal spec values (8px
+   between columns, 8px within the rocker stack, 10px within Putts)
+   regardless of device width, same as the row's own width/height. */
 .rocker-col {
   height: 100%;
   display: flex;
@@ -548,32 +679,90 @@ body.dark-mode .rocker-label.on { color: #fff; }
   color: #141414;
 }
 
+/* Pass 7: fixed-height window (every hole screen, plus Front 9 Score and
+   Final Score below). Width is 100%, same as .btn-row below it, so the
+   photo's left/right edges line up exactly with Back/Next — NOT capped at
+   the reference's literal 354px, which was that mockup canvas's own fixed
+   width, not a hard product width. (Pass 7 first attempt capped it at
+   354px and broke this edge alignment on any screen wider than ~400px —
+   corrected here.) Height stays fixed at the reference's 294px regardless
+   of device width. Container size never changes to fit an image — cover
+   always fills all four sides, cropping any excess; overflow:hidden is a
+   defensive backstop (background-size:cover already clips to the box on
+   its own). Same in both Light and Dark Mode; sits 2px above Back/Next. */
 .hole-photo {
-  flex: 1;
-  min-height: 160px;
-  border-radius: 16px;
+  width: 100%;
+  height: 294px;
+  overflow: hidden;
+  border-radius: 14px;
+  /* Pass 7 (2026-07-24): reverted to plain center — a bottom-anchored
+     version was tried here globally (shifting every hole photo's crop to
+     favor the bottom of the frame) but affected all 18 hole photos plus
+     Final Score/Front 9 Score's images at once, several for the worse.
+     Per Paul: most source images are pre-sized to their container so this
+     default rarely matters, and the one hole that does need a different
+     crop (Hole 2) gets its own inline background-position override instead
+     — see renderHole() in js/app.js — rather than changing everyone's crop
+     to fix one image's. */
   background: #111 center/cover no-repeat;
-  margin-bottom: 20px;
+  margin: 0 0 2px;
+  /* Pass 7 (global standard, not a per-screen fix): repeated elements must
+     never shift position across screens — logo, titles, tee markers,
+     yardages, stat counters, par displays, images, nav buttons all included.
+     Hole screens, Front 9 Score, and Final Score each have different-height
+     content above this point (score panel + stats console vs. a scorecard
+     table +/- a toggle), so letting the photo fall wherever normal flow put
+     it made it (and the nav row right after it, which has no independent
+     positioning of its own) drift screen to screen. Since .screen is a
+     column flexbox and this is the first of the two always-at-the-bottom
+     elements, margin-top:auto absorbs all of that variable space above,
+     pinning the photo (and, following it in flow, the nav row) flush to the
+     screen's fixed 32px bottom padding on every screen that uses this
+     pattern — one shared rule, no inline per-screen positioning. */
+  margin-top: auto;
+}
+/* Final Score's own dedicated photo (18-Score-Card.png) is the one
+   exception to the 14px radius — 18px, per the reference's
+   appImgRadius18 token. Front 9 Score's photo (09-Score-Card.png) stays
+   at the default 14px, same as every in-round hole screen. */
+.hole-photo.final-score-photo {
+  border-radius: 18px;
 }
 
-.quit-link {
-  text-align: center;
-  margin-top: 10px;
-}
-.quit-link button {
-  background: none;
-  border: none;
-  color: var(--ink-muted);
-  text-decoration: underline;
-  font-size: 13px;
-  cursor: pointer;
-}
+/* Pass 7: .quit-link removed — the per-hole "Quit" link is gone; discarding
+   an in-progress round is still reachable via Home's "End / discard round
+   in progress" button (quitCurrentRound() is shared by both, unchanged). */
 
 /* --- Scorecard / Final Score --- */
+/* Pass 7 (2026-07-24): the whole table — both the OUT block (front 9) and
+   the IN block (back 9) — is one continuous <table> with two thead/tbody
+   pairs (see renderFinalScore()/renderFront9Score() in js/app.js), not two
+   separate tables. Rounding only the true outside corners (OUT's header row
+   top corners, IN's score row bottom corners) with a flat, un-rounded,
+   un-stroked seam where OUT's last row meets IN's header row falls out
+   naturally from that — matching Design Handoff's appCardBorder/16px-radius
+   spec and Paul's reference mockup exactly.
+
+   The border/radius/clipping live on .scorecard-frame, a plain wrapping
+   <div>, NOT on the <table> itself. Two separate bugs showed up putting
+   them directly on the table: border-collapse:collapse merges/resolves a
+   table's own outer border together with its (nonexistent, in this
+   markup) cell borders, shrinking the declared 1px border down to a
+   computed ~0.56px; switching to border-collapse:separate didn't fix it
+   either — a <table>'s internal box model (the anonymous table wrapper
+   box some engines insert) can clip or suppress overflow:hidden+border
+   combinations applied straight to the table element. A plain <div>
+   wrapper sidesteps both problems entirely and is the standard pattern for
+   a rounded-and-bordered table. */
+.scorecard-frame {
+  border-radius: 16px;
+  overflow: hidden;
+  border: var(--card-border);
+  margin-bottom: 18px;
+}
 .scorecard {
   width: 100%;
   border-collapse: collapse;
-  margin-bottom: 18px;
   font-size: 14px;
 }
 .scorecard th, .scorecard td {
@@ -581,15 +770,31 @@ body.dark-mode .rocker-label.on { color: #fff; }
   padding: 8px 2px;
 }
 .scorecard thead tr.holes-row th {
-  background: var(--cta-end);
+  background: var(--gradient-cta);
   color: #fff;
   font-weight: 800;
 }
+/* Pass 7 (2026-07-24) — corrected per the actual Design Handoff source
+   (A Bit of Bogey.dc.html's Front 9 Score component, ~line 409-411, cited
+   directly by Paul): the scorecard's Hole/Par/Score rows are a fixed
+   palette that does NOT invert for Dark Mode — only the outer card border
+   (--card-border) does that. This card is meant to read like a printed
+   scorecard sitting on top of whichever mode the rest of the app is in,
+   not a themed surface itself. Earlier passes in this same session tried
+   giving these rows their own Dark Mode variants (chasing a contrast bug)
+   — that was the wrong fix. The ACTUAL bug was simpler: Par row had no
+   explicit `color`, so it inherited the app's mode-flipping --ink (white
+   in Dark Mode) on top of a background that never changed — hence
+   unreadable white-on-light. The real fix is forcing an explicit,
+   unconditional color on both rows, not making the backgrounds dark too. */
 .scorecard tr.par-row td {
-  background: #e6e0d2;
+  background: #d6d8d3; /* per Design Handoff spec, sampled/confirmed against 05-finalscore.png */
+  color: #141414;
   font-weight: 700;
 }
 .scorecard tr.score-row-data td {
+  background: #fff; /* var(--color-ink) per Design Handoff tokens — #FFFFFF, fixed, not --card-bg */
+  color: #141414;
   font-weight: 800;
   font-size: 16px;
 }
@@ -597,7 +802,7 @@ body.dark-mode .rocker-label.on { color: #fff; }
   background: var(--cta-start);
   color: #fff;
 }
-.scorecard tr.par-row td.total { background: #cfc7b3; }
+.scorecard tr.par-row td.total { background: #cdcfca; color: #141414; }
 .scorecard tr.score-row-data td.total { background: var(--cta-end); color: #fff; }
 
 /* Pass 6 Fix 7: per-cell conditional styling on score rows, shared by Final
@@ -619,6 +824,15 @@ body.dark-mode .rocker-label.on { color: #fff; }
   line-height: 19px;
   border: 1.5px solid currentColor;
 }
+/* Pass 7 (2026-07-24) bug fix: .scorecard tr.score-row-data td (added
+   earlier this pass, giving the row its fixed white/#141414 background)
+   has HIGHER specificity than plain .scorecard td.score-tint (an extra
+   `tr` in the selector), so it was silently winning and killing the olive
+   tint on every bogey-3+ cell — found by zooming into a live screenshot,
+   not by inspection. Re-declaring at matching specificity here so the
+   per-cell state always wins over the row default, same fix pattern
+   already used for `.total` below. */
+.scorecard tr.score-row-data td.score-tint,
 .scorecard td.score-tint {
   /* Desaturated olive/sage, sampled directly from the mockup's double-bogey
      cell (rgb(124,136,119)) — deliberately not the maroon brand color so it
@@ -632,6 +846,35 @@ body.dark-mode .rocker-label.on { color: #fff; }
   justify-content: space-between;
   align-items: baseline;
   margin-bottom: 18px;
+}
+
+/* Pass 7 (2026-07-24): superseded the earlier margin-top:auto "flow" theory.
+   That relied on .screen's min-height:100vh always having leftover space
+   for the auto margin to absorb — true only when a screen's own content
+   (topbar + title/stroke/rockers zone + 294px photo + nav row + padding) is
+   SHORTER than the actual viewport. Measured live: a Hole screen's stack is
+   ~835px. On any viewport shorter than that (a real phone's visible area
+   once browser chrome/address bar eats into it — Paul tests in plain
+   Safari/DuckDuckGo/Chrome tabs, not an installed PWA, so that chrome is
+   present) there's no leftover space, margin-top:auto collapses to 0,
+   .screen's min-height grows to fit the overflow instead, and the whole nav
+   row gets pushed below the fold — while Final Score/Front 9 Score
+   (different content stacks) overflow by a different amount or not at all.
+   That's the mismatch Paul caught: Hole screens and Scorecard screens were
+   never guaranteed to land Back/Next at the same spot, because "same spot"
+   depended on content height fitting the viewport, which isn't reliably
+   true on any of them.
+   Fix: this row is now locked with position:absolute;bottom:32px against
+   .screen.pinned-nav, which is itself capped at exactly 100vh (see above),
+   so its `bottom` always resolves against the true device viewport edge
+   regardless of how much content sits above it or whether that content
+   overflows — overflow now scrolls inside .screen-scroll instead of
+   pushing this row down. */
+.nav-row {
+  position: absolute;
+  left: 26px;
+  right: 26px;
+  bottom: max(32px, env(safe-area-inset-bottom));
 }
 .final-score-header .total-score {
   font-family: var(--font-marquee);
@@ -781,7 +1024,12 @@ body.dark-mode .rocker-label.on { color: #fff; }
   width: 22px;
   border-radius: 6px 6px 2px 2px;
   background: linear-gradient(160deg, var(--cta-start), var(--cta-end));
-  align-self: flex-end;
+  /* No align-self here (2026-07-25). `.bar-col` is flex-direction: column, so
+     align-self acts on the HORIZONTAL axis inside it — `flex-end` was shoving
+     every bar to the right edge of its column while .bar-value/.bar-label
+     stayed centred, which read as the labels sitting left of their bars.
+     Bottom-alignment comes from .bar-row's `align-items: flex-end`, which is
+     the axis that actually needed it. */
 }
 .bar.bar-good {
   background: linear-gradient(160deg, #3f7d4f, #2c5a38);
@@ -806,11 +1054,146 @@ body.dark-mode .rocker-label.on { color: #fff; }
   color: var(--ink);
 }
 .bar-label {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--ink-muted);
   text-transform: none;
 }
+
+/* --- Today's Round (2026-07-25 design pass) -------------------------------
+   Six equal tiles, 3 across x 2 down, with the Actual Score as a hero beside
+   them. The hero is vertically centred across both tile rows. */
+.today-round {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 6px;
+}
+.today-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.today-tile { text-align: center; }
+.today-tile-value {
+  font-family: var(--font-marquee);
+  font-size: 30px;
+  line-height: 1.05;
+  color: var(--ink);
+}
+.today-tile-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+.today-hero {
+  flex: 0 0 auto;
+  text-align: center;
+  padding-left: 2px;
+}
+.today-hero-score {
+  font-family: var(--font-marquee);
+  font-size: 56px;
+  line-height: 1;
+  color: var(--ink);
+}
+.today-hero-net {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  margin-top: 4px;
+}
+@media (max-width: 360px) {
+  .today-hero-score { font-size: 46px; }
+  .today-tile-value { font-size: 26px; }
+}
+
+/* Splits a stat table into cost-above / return-below groups (Membership ROI). */
+.stat-table tr.stat-row-group td {
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+/* --- Off-season rounds entry (2026-07-25) ---------------------------------
+   Inside the Membership ROI section, using .stat-table so the type matches the
+   rows above it exactly. Steppers, not an Add button: the number shown is the
+   number stored, which is what makes a second visit a correction rather than a
+   guess. */
+.os-heading {
+  margin: 22px 0 2px;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.os-note {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+.os-table tr td { padding: 6px 4px; }
+/* Live rounds already captured that month — the guard against tallying a round
+   the app has. Sits inline with the month so it costs no column. */
+.os-logged {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+.os-step { white-space: nowrap; }
+.os-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: pointer;
+}
+.os-btn:disabled { opacity: .3; cursor: default; }
+.os-count {
+  display: inline-block;
+  min-width: 28px;
+  text-align: center;
+  vertical-align: middle;
+  font-weight: 800;
+}
+
+/* Caption under a chart — quieter than .report-sub, sits below not beside. */
+.report-note {
+  margin: 10px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+/* Wide-slab bar variant used by Today's Round and Score Distribution. The
+   scrolling charts (differentials, hole ratings) keep the narrow .bar width. */
+.bar-row.thick { gap: 10px; align-items: flex-end; }
+.bar-row.thick .bar-col { gap: 6px; }
+.bar-row.thick .bar {
+  width: 100%;
+  max-width: 92px;
+  border-radius: 8px 8px 2px 2px;
+}
+/* thick + scroll (Last 10 Rounds): slabs can't be 1fr inside a scroller or they
+   collapse, so give the column a fixed readable width and let it overflow. */
+.bar-row.thick.scroll { justify-content: flex-start; overflow-x: auto; }
+.bar-row.thick.scroll .bar-col { flex: 0 0 auto; width: 58px; }
+.bar-row.thick.scroll .bar { width: 52px; max-width: 52px; }
+/* A genuine zero: a flat baseline rule, not a stunted bar. */
+.bar-row.thick .bar.bar-zero { border-radius: 2px; }
 
 /* Handicap Index readout */
 .handicap-readout {
@@ -963,6 +1346,12 @@ body.dark-mode .rocker-label.on { color: #fff; }
 .menu-item.menu-item-last {
   border-bottom: 1px solid rgba(255,255,255,.08);
 }
+/* Call Clubhouse is an <a>, not a <button> — match the button items exactly so
+   the menu reads as one list, and kill the default link underline/colour. */
+a.menu-item {
+  text-decoration: none;
+  box-sizing: border-box;
+}
 
 /* --- Dark mode (Pass 3) ---
    No dark-mode mockup exists for this build; keeps the maroon CTA gradient
@@ -977,4 +1366,7 @@ body.dark-mode {
   --line: #3A362C;
   --card-bg: #221F19;
   --toast-bg: #3A362C;
+  /* Pass 7: --card-border intentionally NOT overridden here — confirmed
+     fixed at rgba(0,0,0,.5) regardless of mode, per the Design Handoff
+     token and Paul. See the :root definition for the correction history. */
 }

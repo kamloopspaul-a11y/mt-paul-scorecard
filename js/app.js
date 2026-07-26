@@ -8,9 +8,9 @@
 
 import { buildRoundRecord, buildNineHoleRecord, resolvePendingNine } from './round-record.js';
 import { buildSettingsRecord } from './settings-record.js';
-import { loadCourseData, getHolesForTee, getPar } from './course-data.js';
+import { loadCourseData, getHolesForTee, getPar, getStrokeIndex } from './course-data.js';
 import { KEYS, readJSON, writeJSON, remove, appendToArray } from './storage.js';
-import { buildAnalytics, loadHandicapRatings, markWeekAnimated } from './stats.js';
+import { buildAnalytics, loadHandicapRatings, markWeekAnimated, withSeasonSettings, withGreenFeeChange, currentGreenFee, seasonYear, withOffSeasonRounds } from './stats.js';
 import {
   TOGGLE_ON_GRADIENT, TOGGLE_OFF_GRADIENT,
   TOGGLE_ON_SHADOW, TOGGLE_OFF_SHADOW,
@@ -28,9 +28,12 @@ let handicapData = null;
 const WEATHER_URL = 'https://api.open-meteo.com/v1/forecast?latitude=50.6745&longitude=-120.3273&current=temperature_2m,wind_speed_10m&temperature_unit=celsius&wind_speed_unit=kmh';
 
 // Module-level weather readout state — refreshed each time the Setup/Settings
-// screen loads. Never blocks the UI: on fetch failure both fields go back to
-// '' and the readout just renders blank (no error surfaced to the user).
-let weatherState = { temp: '', wind: '' };
+// or Start Round screen loads. Never blocks the UI: on fetch failure both
+// fields go back to null and the readout just renders blank (no error
+// surfaced to the user). Pass 7: stores raw numbers rather than a
+// pre-formatted string — Setup ("Temp: 18°C · Wind: 8 km/h") and Start
+// Round ("18°C | 8 km/h") each format it differently.
+let weatherState = { tempC: null, windKmh: null };
 
 // --- App state (module-level, single source of truth for the UI) ---
 const state = {
@@ -42,10 +45,22 @@ const state = {
   toastTimer: null,
   fromSettings: false, // whether Setup screen was opened from Home > Settings (vs first run)
   menuOpen: false,     // Pass 6 Fix 3: hamburger slide-out menu, available from every topbar
-  front9Continue: true // Pass 6 Fix 6: Front 9 Score screen's Continue/Quit toggle (Case A only)
+  front9Continue: true, // Pass 6 Fix 6: Front 9 Score screen's Continue/Post Now toggle (Case A only)
+  front9Posting: false, // Pass 7: true while the post-save spinner is showing (UI delay only — the
+                         // actual write already happened before the spinner started)
+  front9Posted: false,  // Pass 7: true once Post Now has completed — swaps toggle/Back/Next for
+                         // "Round Saved." and removes them; Menu is the only way forward from there
+  front9Snapshot: null  // Pass 7: { front, totalScore, parTotal, playerName, isStandaloneNine }
+                         // captured from currentRound right before Post Now clears it, so the
+                         // scorecard table can keep rendering through the spinner/saved states
 };
 
 function pad2(n) { return n < 10 ? '0' + n : String(n); }
+
+// "JUL 24, 2026" — Start Round screen's date line.
+function todayLabel() {
+  return new Date().toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }).toUpperCase();
+}
 
 // ===================== Init =====================
 
@@ -73,11 +88,27 @@ async function init() {
   // Register the service worker for offline/app-shell caching (see sw.js).
   // Guarded so a lack of SW support, an insecure context, or a registration
   // failure never throws or blocks app boot.
+  // TEMP (local edit-review cycle, see JOURNAL.md): skipped on localhost so
+  // the cache-first SW can't mask live edits while testing against
+  // `python3 -m http.server`. Remove this hostname guard before shipping —
+  // it must register normally on the real GitHub Pages deploy.
+  const isLocalDev = ['localhost', '127.0.0.1'].includes(location.hostname);
   try {
-    if ('serviceWorker' in navigator) {
+    if ('serviceWorker' in navigator && !isLocalDev) {
       navigator.serviceWorker.register('./sw.js').catch((e) => {
         console.warn('Service worker registration failed', e);
       });
+    } else if ('serviceWorker' in navigator && isLocalDev) {
+      // Self-healing: a SW registered before this guard existed (or from an
+      // earlier local session) would otherwise keep intercepting fetches
+      // cache-first and masking live edits forever. Kill it and its caches
+      // on every local boot so localhost always reflects disk.
+      navigator.serviceWorker.getRegistrations().then((regs) => {
+        regs.forEach((r) => r.unregister());
+      });
+      if (window.caches) {
+        caches.keys().then((keys) => keys.forEach((k) => caches.delete(k)));
+      }
     }
   } catch (e) {
     console.warn('Service worker registration threw', e);
@@ -112,6 +143,8 @@ async function init() {
     // that review screen — same crash-resilience contract as the completed-
     // 18-hole-round case above, just one screen earlier in the flow.
     state.front9Continue = true;
+    state.front9Posting = false;
+    state.front9Posted = false;
     state.screen = 'front9score';
     render();
     return;
@@ -124,7 +157,11 @@ async function init() {
     resumeIntoHoleScreen();
     return;
   } else {
-    state.screen = 'home';
+    // Pass 7: nothing to resume — a normal launch lands on Start Round, per
+    // Paul ("once installed as a PWA, the app, when launched will go to the
+    // Start Round screen"). The crash-resilience branches above this one
+    // (finalscore/front9score/mid-flight resume) still take priority.
+    state.screen = 'startround';
   }
   render();
 }
@@ -149,19 +186,32 @@ async function fetchWeather() {
   try {
     const res = await fetch(WEATHER_URL);
     const data = await res.json();
-    weatherState.temp = 'Temp: ' + Math.round(data.current.temperature_2m) + '°C';
-    weatherState.wind = 'Wind: ' + Math.round(data.current.wind_speed_10m) + ' km/h';
+    weatherState.tempC = Math.round(data.current.temperature_2m);
+    weatherState.windKmh = Math.round(data.current.wind_speed_10m);
   } catch (e) {
-    weatherState.temp = '';
-    weatherState.wind = '';
+    weatherState.tempC = null;
+    weatherState.windKmh = null;
   }
   updateWeatherReadout();
 }
 
+// Setup's own format: "Temp: 18°C · Wind: 8 km/h".
+function formatWeatherForSetup() {
+  if (weatherState.tempC == null) return '';
+  return 'Temp: ' + weatherState.tempC + '°C · Wind: ' + weatherState.windKmh + ' km/h';
+}
+
+// Start Round's format: "18°C | 8 km/h".
+function formatWeatherForStartRound() {
+  if (weatherState.tempC == null) return '';
+  return weatherState.tempC + '°C | ' + weatherState.windKmh + ' km/h';
+}
+
 function updateWeatherReadout() {
-  const el = document.getElementById('weather-readout');
-  if (!el) return; // user navigated away before the fetch resolved — no-op
-  el.textContent = [weatherState.temp, weatherState.wind].filter(Boolean).join(' · ');
+  const setupEl = document.getElementById('weather-readout');
+  if (setupEl) setupEl.textContent = formatWeatherForSetup();
+  const startEl = document.getElementById('start-weather-readout');
+  if (startEl) startEl.textContent = formatWeatherForStartRound();
 }
 
 // ===================== Round lifecycle =====================
@@ -169,13 +219,54 @@ function updateWeatherReadout() {
 function startRound({ startHoleNum, sessionLength }) {
   const tee = (state.settings && state.settings.teePref) || 'blue';
   const playerName = (state.settings && state.settings.playerName) || '';
-  state.currentRound = { tee, playerName, startHoleNum, sessionLength, holes: [] };
+  // Rating set is snapshotted onto the round at start, not read live from
+  // Settings when Analytics renders — so changing the Settings switch later
+  // never rewrites the differentials of rounds already played (2026-07-25).
+  const ratingSet = (state.settings && state.settings.ratingSet) === 'female' ? 'female' : 'male';
+  // Snapshot conditions at tee-off. weatherState is refreshed by fetchWeather()
+  // when the Start Round screen renders; if that failed both stay null.
+  const { tempC, windKmh } = weatherState;
+  state.currentRound = {
+    tee, playerName, ratingSet, tempC, windKmh, startHoleNum, sessionLength, holes: []
+  };
   writeJSON(KEYS.CURRENT_ROUND, state.currentRound);
   goToHoleScreen();
 }
 
 function resumeIntoHoleScreen() {
   goToHoleScreen();
+}
+
+// Pass 7: replaces the old standalone "Home" dashboard (Play 18/Play 9,
+// Resume, pending-nine card) entirely — per Design Handoff/README.md's own
+// onboarding-flow line ("Setup -> Home (Hole 1, live scoring begins)"), Home
+// was never meant to be a separate landing screen; it's just shorthand for
+// "back into the game." Every former "go to Home" callsite now calls this
+// instead, and it always lands on a hole screen (never a dashboard):
+//   1. Round already in progress -> resume it exactly where it left off.
+//   2. Otherwise -> always start a fresh 18-hole round at Hole 1.
+//
+// Pass 7 revision: this used to also auto-detect a waiting pending-nine
+// widow (see resolveNineAndSave()) and silently start its complementary
+// half at Hole 10 instead, on the theory that it'd pair into a full 18 the
+// moment it's completed. Removed per Paul: a widow has no expiry, so this
+// made "Start Round" hijack a brand-new outing into "finish some old
+// unrelated round" with zero indication why — surfaced by a real scenario
+// (rain delay ends Tuesday's round after the front 9 is posted; Thursday's
+// [sic] fresh 18-hole round then opened on Hole 10 instead of Hole 1, no
+// explanation given). Start Round is now unconditional: always Hole 1.
+// Pairing (resolvePendingNine()) still exists and still runs whenever a
+// standalone nine is saved — it just isn't fished for here anymore. A
+// widow only pairs if its complementary half happens to get played and
+// saved on its own later, whenever that is, if ever — that's an accepted
+// outcome now, not a bug.
+function goToPlayRound() {
+  const cr = state.currentRound;
+  if (cr && Array.isArray(cr.holes) && cr.holes.length < (cr.sessionLength || 18)) {
+    resumeIntoHoleScreen();
+    return;
+  }
+  startRound({ startHoleNum: 1, sessionLength: 18 });
 }
 
 // Builds a fresh editable draft for whichever hole comes next in currentRound,
@@ -185,9 +276,16 @@ function goToHoleScreen() {
   const holesPlayed = cr.holes.length;
   const holeNum = cr.startHoleNum + holesPlayed;
   const par = courseData ? getPar(courseData, cr.tee, holeNum) : 4;
+  // Stroke index travels with the hole (2026-07-25). Analytics needs it for the
+  // net double bogey adjustment (WHS Rule 3.1b); capturing it here rather than
+  // looking it up later means a round stays correct even if the course file is
+  // re-rated, and stays correct once rounds from more than one course share a
+  // history. stats.js prefers this over the ratings file, and tolerates null.
+  const si = courseData ? getStrokeIndex(courseData, cr.tee, holeNum) : null;
   state.draft = {
     holeNum,
     par,
+    si,
     score: par,
     fir: false, // shown on every hole including par-3s per mockups — no more null special-casing (Pass 5 Fix 1)
     gir: false,
@@ -217,6 +315,8 @@ function commitHoleAndAdvance() {
   // still fall through to the finishSession()/goToHoleScreen() logic below.
   if (cr.startHoleNum === 1 && cr.holes.length === 9) {
     state.front9Continue = true; // default toggle position — Continue active
+    state.front9Posting = false;
+    state.front9Posted = false;
     state.screen = 'front9score';
     render();
     return;
@@ -255,6 +355,8 @@ function goBackFromHole() {
   if (d.holeNum === 10 && cr.startHoleNum === 1) {
     state.draft = null;
     state.front9Continue = true;
+    state.front9Posting = false;
+    state.front9Posted = false;
     state.screen = 'front9score';
     render();
     return;
@@ -262,21 +364,65 @@ function goBackFromHole() {
   popPreviousHoleIntoDraft();
 }
 
-// Shared by the Front 9 Score screen's Quit path (Case A, 18-hole session)
-// and its Post Now path (Case B, standalone 9-hole session) — the exact same
-// save-as-widow-or-paired flow finishSession() already ran silently for a
-// completed standalone 9-hole session; now triggered explicitly from the
-// reviewable Front 9 Score screen instead of automatically on hole 9's commit.
-function finishFrontNineNow() {
+// Shared by the Front 9 Score screen's Post Now path in both Case A (18-hole
+// session) and Case B (standalone 9-hole session) — the exact same save-as-
+// widow-or-paired flow finishSession() already ran silently for a completed
+// standalone 9-hole session; now triggered explicitly from the reviewable
+// Front 9 Score screen instead of automatically on hole 9's commit.
+// opts.skipNavigate: true keeps the caller on the current screen instead of
+// jumping straight to goToPlayRound() — see postFrontNineNow() below, which
+// uses this to hold the Front 9 Score screen in place through the spinner/
+// "Round Saved." confirmation instead of navigating away immediately.
+function finishFrontNineNow(opts = {}) {
   const cr = state.currentRound;
   const nine = buildNineHoleRecord({
     date: new Date().toISOString(),
     playerName: cr.playerName,
     tee: cr.tee,
+    ratingSet: cr.ratingSet,
+    tempC: cr.tempC,
+    windKmh: cr.windKmh,
     half: 'front',
     holes: cr.holes
   });
-  resolveNineAndSave(nine);
+  resolveNineAndSave(nine, opts);
+}
+
+// Pass 7: the Front 9 Score screen's Post Now action (Case A toggle set off
+// Continue, or Case B's always-Post-Now). The actual save happens
+// immediately/synchronously here (write-before-navigate, same contract as
+// commitHoleAndAdvance's per-hole writes) — the spinner that follows is a
+// pure UI delay to reassure the player something happened, not a gate on the
+// write itself. If the app were closed mid-spinner, the round is already
+// safely in rounds-history (or pending-nine) by that point.
+//
+// Once the delay elapses, front9Posted flips on and renderFront9Score() swaps
+// the toggle/Back/Next row for a "Round Saved." message with nothing but the
+// hamburger Menu left to navigate onward — Back has nothing left to edit
+// (currentRound is already cleared) and Next has nothing left to do (the
+// save already ran), so both are removed rather than left dangling.
+function postFrontNineNow() {
+  if (state.front9Posting || state.front9Posted) return; // guard against a stray double-tap
+  const cr = state.currentRound;
+  const front = cr.holes.slice(0, 9);
+  state.front9Snapshot = {
+    front,
+    totalScore: front.reduce((s, h) => s + h.score, 0),
+    parTotal: front.reduce((s, h) => s + h.par, 0),
+    playerName: cr.playerName,
+    isStandaloneNine: cr.sessionLength === 9
+  };
+
+  finishFrontNineNow({ skipNavigate: true }); // real save, happens now
+
+  state.front9Posting = true;
+  render();
+
+  setTimeout(() => {
+    state.front9Posting = false;
+    state.front9Posted = true;
+    render();
+  }, 2400);
 }
 
 // A session (9 or 18 holes) just reached its target length by natural play
@@ -305,7 +451,7 @@ function finishSession() {
 // Given a just-completed nine-hole record, check for a pending widow and
 // either pair it into a full round (append to rounds-history) or store it as
 // the new pending nine. Always clears currentRound afterward.
-function resolveNineAndSave(justPlayedNine) {
+function resolveNineAndSave(justPlayedNine, opts = {}) {
   const pending = readJSON(KEYS.PENDING_NINE, null);
   const { pairedRound, newPendingNine } = resolvePendingNine(pending, justPlayedNine);
   if (pairedRound) {
@@ -319,8 +465,9 @@ function resolveNineAndSave(justPlayedNine) {
   }
   remove(KEYS.CURRENT_ROUND);
   state.currentRound = null;
-  state.screen = 'home';
-  render();
+  if (!opts.skipNavigate) {
+    goToPlayRound();
+  }
 }
 
 // Which contiguous nine-hole chunk of the current round counts as "complete",
@@ -341,7 +488,7 @@ function getCompletedNineChunk(cr) {
 // Reachable from every hole screen. Behavior depends on holes completed.
 function quitCurrentRound() {
   const cr = state.currentRound;
-  if (!cr) { state.screen = 'home'; render(); return; }
+  if (!cr) { goToPlayRound(); return; }
 
   const completedCount = cr.holes.length;
 
@@ -354,8 +501,7 @@ function quitCurrentRound() {
     remove(KEYS.CURRENT_ROUND);
     state.currentRound = null;
     state.draft = null;
-    state.screen = 'home';
-    render();
+    goToPlayRound();
     return;
   }
 
@@ -368,8 +514,7 @@ function quitCurrentRound() {
     remove(KEYS.CURRENT_ROUND);
     state.currentRound = null;
     state.draft = null;
-    state.screen = 'home';
-    render();
+    goToPlayRound();
     return;
   }
 
@@ -377,6 +522,9 @@ function quitCurrentRound() {
     date: new Date().toISOString(),
     playerName: cr.playerName,
     tee: cr.tee,
+    ratingSet: cr.ratingSet,
+    tempC: cr.tempC,
+    windKmh: cr.windKmh,
     half: chunk.half,
     holes: chunk.holes
   });
@@ -394,13 +542,15 @@ function saveFinalRound() {
     date: new Date().toISOString(),
     playerName: cr.playerName,
     tee: cr.tee,
+    ratingSet: cr.ratingSet,
+    tempC: cr.tempC,
+    windKmh: cr.windKmh,
     holes: cr.holes
   });
   appendToArray(KEYS.ROUNDS_HISTORY, record);
   remove(KEYS.CURRENT_ROUND);
   state.currentRound = null;
-  state.screen = 'home';
-  render();
+  goToPlayRound();
   showToast('Saved to your device');
 }
 
@@ -432,26 +582,104 @@ function formatFeeForInput(n) {
   return '$' + num.toLocaleString('en-CA');
 }
 
+// Offer to restamp already-posted rounds when the rating set changes
+// (2026-07-25). Every round stores the rating set it was played under, so
+// flipping the Settings switch normally leaves history alone — that is what
+// stops a stray tap silently moving the Handicap Index.
+//
+// The one case that needs an escape hatch: the switch defaults to Men's, so a
+// ladies' player who plays a few rounds before noticing has those rounds locked
+// to the wrong set with no way back. This offers the correction explicitly —
+// only when there is history to correct, never silently, and stating exactly
+// how many rounds it will rewrite and that it will move the Index.
+//
+// Returns the number of rounds restamped (0 if declined or nothing to do).
+function offerRestampExistingRounds(previousSet, nextSet) {
+  if (previousSet === nextSet) return 0;
+  const history = readJSON(KEYS.ROUNDS_HISTORY, []);
+  if (!Array.isArray(history) || !history.length) return 0;
+
+  const label = (s) => (s === 'female' ? "Ladies'" : "Men's");
+  const n = history.length;
+  const ok = window.confirm(
+    `Also apply ${label(nextSet)} Ratings to your ${n} existing round${n === 1 ? '' : 's'}?\n\n` +
+    `Choose OK only if those rounds were played on ${label(nextSet)} Ratings and the setting was ` +
+    `wrong. This recalculates their Score Differentials and will change your Handicap Index.\n\n` +
+    `Choose Cancel to leave them on ${label(previousSet)} Ratings — new rounds will use ` +
+    `${label(nextSet)} Ratings either way.`
+  );
+  if (!ok) return 0;
+
+  writeJSON(KEYS.ROUNDS_HISTORY, history.map((r) => ({ ...r, ratingSet: nextSet })));
+  return n;
+}
+
 function saveSetup(values) {
+  const previousSet = (state.settings && state.settings.ratingSet) === 'female' ? 'female' : 'male';
+  const nextSet = values.ratingSet === 'female' ? 'female' : 'male';
   const rec = buildSettingsRecord({
     playerName: values.playerName,
     teePref: values.teePref,
+    ratingSet: nextSet,
     statsTrackingEnabled: values.statsTrackingEnabled,
     lightMode: values.lightMode !== false,
     membershipFee: values.membershipFee || 0,
-    greenFee: values.greenFee || 0
+    greenFee: values.greenFee || 0,
+    // Preserved across a Settings save — there is no input for it yet, so a
+    // save would otherwise wipe a seeded/entered value.
+    roundsToDate: (state.settings && state.settings.roundsToDate) || 0,
+    seasons: (state.settings && state.settings.seasons) || {}
   });
+  const restamped = offerRestampExistingRounds(previousSet, nextSet);
   // `onboarded` is an app-shell-only flag (not part of settings-record.js's
   // documented schema) so returning users skip Onboarding/Setup on future
   // loads, per the README's own suggested fix for the "no welcome-back path"
   // gap.
   rec.onboarded = true;
+  // Fees are filed under the CURRENT CALENDAR YEAR, stamped silently from the
+  // clock (2026-07-25). Fees change season to season, so one flat pair can only
+  // ever be right for one year; the player is asked what they paid, never which
+  // year it belongs to. Past seasons keep the fees they were actually charged,
+  // so an old season's ROI stays correct forever.
+  let withSeason = withSeasonSettings(rec, {
+    membershipFee: rec.membershipFee,
+    roundsToDate: rec.roundsToDate
+  });
+  // A green fee EDIT is a rate change effective today, not a correction of the
+  // past: rounds already played keep the rate they were played under, and the
+  // ledger stays stable. Only recorded when the figure actually differs from
+  // the rate currently in effect, so re-saving Settings never stacks duplicates.
+  const newFee = Number(rec.greenFee) || 0;
+  if (newFee > 0 && newFee !== currentGreenFee(withSeason)) {
+    // The FIRST rate of a season is dated to 1 January, not to today. "The
+    // green fee is $45" means it applies to the season, not from the moment it
+    // was typed — and dating it today would leave earlier rounds priced by
+    // greenFeeOn()'s back-fill rather than by an explicit entry that says so.
+    // Every later change is a real change, dated the day it is entered.
+    const hasRate = currentGreenFee(withSeason) !== null;
+    const effectiveFrom = hasRate ? new Date() : `${seasonYear()}-01-01`;
+    withSeason = withGreenFeeChange(withSeason, newFee, effectiveFrom);
+  }
+  Object.assign(rec, { seasons: withSeason.seasons });
   state.settings = rec;
   writeJSON(KEYS.SETTINGS, rec);
   applyDarkModeClass(rec.lightMode === false);
+  if (restamped) {
+    showToast(`${restamped} round${restamped === 1 ? '' : 's'} updated to ${nextSet === 'female' ? "Ladies'" : "Men's"} Ratings`);
+  }
+  // Pass 7: first-run Setup -> Save advances to Start Round, per Paul
+  // ("Once Setup is completed then Save advances the user to the Start
+  // Round screen"). A mid-game Settings revisit (state.fromSettings, opened
+  // via the menu) keeps the prior behavior of dropping straight back into
+  // play — not explicitly addressed yet, so left as-is rather than guessed.
+  const wasFromSettings = state.fromSettings;
   state.fromSettings = false;
-  state.screen = 'home';
-  render();
+  if (wasFromSettings) {
+    goToPlayRound();
+  } else {
+    state.screen = 'startround';
+    render();
+  }
 }
 
 // ===================== Toast =====================
@@ -484,7 +712,7 @@ function render() {
   switch (state.screen) {
     case 'onboarding': html = renderOnboarding(); break;
     case 'setup': html = renderSetup(); break;
-    case 'home': html = renderHome(); break;
+    case 'startround': html = renderStartRound(); break;
     case 'hole': html = renderHole(); break;
     case 'finalscore': html = renderFinalScore(); break;
     case 'front9score': html = renderFront9Score(); break;
@@ -512,8 +740,28 @@ function topbarHTML() {
 // topbar without making the menu screen-specific. Closing it (✕ or backdrop
 // tap) without picking a nav item leaves state.screen/state.draft/
 // state.currentRound completely untouched — it's purely an overlay.
+// Clubhouse phone, read from mt-paul-course-data.json rather than hardcoded so
+// it travels with the course file (2026-07-25). Returns null when course data
+// hasn't loaded or carries no number, in which case the menu item is omitted
+// entirely rather than rendering a dead link.
+//
+// `tel:` is normalised to E.164 (+1 for Canada) because a raw "250-374-4653"
+// is dialled inconsistently across platforms; the DISPLAYED text keeps the
+// human formatting from the data file.
+function clubhousePhone() {
+  const raw = courseData && courseData.phone;
+  if (!raw) return null;
+  const digits = String(raw).replace(/\D/g, '');
+  if (digits.length < 10) return null;
+  const e164 = digits.length === 10 ? '+1' + digits : '+' + digits;
+  // `display` is not shown in the menu (2026-07-25: Paul — the label alone is
+  // enough) but is returned for any future caller that wants the readable form.
+  return { display: String(raw), href: 'tel:' + e164 };
+}
+
 function menuOverlayHTML() {
   if (!state.menuOpen) return '';
+  const phone = clubhousePhone();
   return `
     <div class="menu-scrim" id="menu-scrim"></div>
     <div class="menu-flyout" id="menu-flyout">
@@ -523,7 +771,10 @@ function menuOverlayHTML() {
       </div>
       <button class="menu-item" id="menu-item-analytics">Analytics</button>
       <button class="menu-item" id="menu-item-play">Play Round</button>
-      <button class="menu-item menu-item-last" id="menu-item-settings">Settings</button>
+      <button class="menu-item${phone ? '' : ' menu-item-last'}" id="menu-item-settings">Settings</button>
+      ${phone
+        ? `<a class="menu-item menu-item-last menu-item-call" id="menu-item-call" href="${phone.href}">Call Clubhouse</a>`
+        : ''}
     </div>
   `;
 }
@@ -547,14 +798,19 @@ function scoreCellHTML(score, par) {
 
 function renderOnboarding() {
   return `
-    <div class="screen onboarding-screen" style="background-image: linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.75)), url('assets/00-Start.png'); background-size: cover; background-position: center;">
+    <div class="screen onboarding-screen" style="background-image: linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.75)), url('assets/00-Bogey-Screen.png'); background-size: cover; background-position: center;">
       <div class="onboarding-title-block">
         <div class="subtitle">SOMETIMES</div>
         <h1>Bogey</h1>
         <div class="onboarding-credits">
-          <div>Starring Pat,<br>Dave, May, Mike,<br>Morgan, Titley</div>
-          <div>An Out of Bounds Film<br>Music Score by Birdie</div>
-          <div>Les Putts Director<br>An 18 Hole Production</div>
+          <div class="credit-line" style="grid-column:1;grid-row:1">Starring&nbsp;&nbsp;Pat Morgan</div>
+          <div class="credit-line" style="grid-column:1;grid-row:2">Dave May&nbsp;&nbsp;Mike Titley</div>
+          <div class="credit-divider" style="grid-column:2;grid-row:1/3"></div>
+          <div class="credit-line" style="grid-column:3;grid-row:1">An Out of Bounds Film</div>
+          <div class="credit-line" style="grid-column:3;grid-row:2">Music Score by Birdie</div>
+          <div class="credit-divider" style="grid-column:4;grid-row:1/3"></div>
+          <div class="credit-line" style="grid-column:5;grid-row:1">Les Putts Director</div>
+          <div class="credit-line" style="grid-column:5;grid-row:2">An 18 Hole Production</div>
         </div>
       </div>
       <div class="onboarding-cta">
@@ -562,6 +818,97 @@ function renderOnboarding() {
       </div>
     </div>
   `;
+}
+
+// ===================== TEMPORARY: Analytics test data (2026-07-24) =====================
+// Paul asked for a disposable, random 20-round dataset to test the upcoming
+// Analytics work against, to be deleted once that work is confirmed. This
+// whole block — this function, loadTestData/clearTestData below, the
+// "Testing" card in renderSetup(), and their handlers in attachHandlers()'s
+// 'setup' case — should come out together when that's done. Nothing here is
+// meant to ship. See also KEYS.ROUNDS_HISTORY_TEST_BACKUP in storage.js.
+//
+// Replaced the earlier random generator (2026-07-25) with a FIXED fixture:
+// wip/test-rounds-20.json, built by wip/make-test-rounds.py. The random version
+// rolled each field independently, so it emitted holes that cannot exist —
+// 8 with score − putts < 1, and 43 flagged `ud` without a 1-putt — which made
+// every Scrambling & Putting figure impossible to check by hand. A fixed set
+// means the same numbers load every time, so each stat can be verified once
+// and re-checked after every edit.
+//
+// The fixture is pinned to Handicap Index 20.0 on Mt. Paul blue
+// (CR 59.0 / slope 86): best 8 of 20 differentials
+// [9.2, 14.5, 18.4, 21.0, 23.7, 25.0, 26.3, 28.9], mean 20.875, × 0.96 = 20.0.
+// Profile is a streaky player — scores 66 to 94, good and bad holes clustered
+// into runs rather than sprinkled evenly. Every hole satisfies:
+//   score = strokesToGreen + putts (strokesToGreen >= 1)
+//   gir  <=> score === par - 2 + putts
+//   ud   <=> !gir && putts === 1
+//   fir  === null on every par 3; pen only on holes played over par
+//
+// Lives in /wip/ (gitignored) because, like the rest of this block, it must
+// never ship — so this fetch 404s on GitHub Pages by design. Holes are fed
+// back through buildRoundRecord() rather than trusting the file's own totals,
+// keeping round-record.js the single place those sums are computed.
+const TEST_FIXTURE_URL = './wip/test-rounds-20.json';
+
+async function fetchTestRounds() {
+  const res = await fetch(TEST_FIXTURE_URL, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`${TEST_FIXTURE_URL} → ${res.status}`);
+  const raw = await res.json();
+  if (!Array.isArray(raw) || !raw.length) throw new Error('fixture is empty or not an array');
+  const playerName = (state.settings && state.settings.playerName) || 'Dave';
+  return raw
+    .map((r) => buildRoundRecord({
+      date: r.date, playerName, tee: r.tee || 'blue', ratingSet: r.ratingSet, holes: r.holes
+    }))
+    .sort((a, b) => new Date(a.date) - new Date(b.date)); // oldest-first, as appendToArray() accumulates
+}
+
+// TEMPORARY (2026-07-25) — membership figures seeded alongside the test rounds
+// so the ROI section has something to compute from. Paul's numbers:
+// $1,450 annual, $45 green fee, 54 rounds to date. RTD is deliberately NOT the
+// fixture's 20 logged rounds — rounds on a membership can predate the app, and
+// roundsToDate() treats the settings value as authoritative when present.
+// Remove with the rest of the testing block.
+const TEST_MEMBERSHIP = { membershipFee: 1450, greenFee: 45, roundsToDate: 54 };
+
+async function loadTestData() {
+  let rounds;
+  try {
+    rounds = await fetchTestRounds();
+  } catch (e) {
+    console.error('Test fixture failed to load', e);
+    showToast('Test data unavailable — see console');
+    return;
+  }
+  const existing = readJSON(KEYS.ROUNDS_HISTORY, []);
+  // Only back up once — a second Load tap must not overwrite Paul's real
+  // backup with the first batch of test data.
+  if (Array.isArray(existing) && existing.length && !readJSON(KEYS.ROUNDS_HISTORY_TEST_BACKUP, null)) {
+    writeJSON(KEYS.ROUNDS_HISTORY_TEST_BACKUP, existing);
+  }
+  writeJSON(KEYS.ROUNDS_HISTORY, rounds);
+  const settings = readJSON(KEYS.SETTINGS, null);
+  if (settings) {
+    const seeded = withSeasonSettings(
+      Object.assign({}, settings, TEST_MEMBERSHIP), TEST_MEMBERSHIP
+    );
+    writeJSON(KEYS.SETTINGS, seeded);
+    state.settings = seeded;
+  }
+  showToast(`Test data loaded — ${rounds.length} rounds`);
+}
+
+function clearTestData() {
+  const backup = readJSON(KEYS.ROUNDS_HISTORY_TEST_BACKUP, null);
+  if (backup) {
+    writeJSON(KEYS.ROUNDS_HISTORY, backup);
+    remove(KEYS.ROUNDS_HISTORY_TEST_BACKUP);
+  } else {
+    writeJSON(KEYS.ROUNDS_HISTORY, []);
+  }
+  showToast('Test data cleared');
 }
 
 // ===================== Screen: Setup / Settings (Pass 3) =====================
@@ -575,11 +922,14 @@ function renderSetup() {
   const s = state.settings || {};
   const name = s.playerName || '';
   const tee = s.teePref || 'blue';
+  // Which published Course Rating / Slope set applies. Mt. Paul rates the same
+  // Blue and Red tees for both — only CR/Slope differ, stroke index is shared.
+  const ratingSet = s.ratingSet === 'female' ? 'female' : 'male';
   const statsOn = s.statsTrackingEnabled !== false;
   const lightOn = s.lightMode !== false; // default true (Light Mode), per settings-record.js
   const membershipFeeVal = formatFeeForInput(s.membershipFee);
   const greenFeeVal = formatFeeForInput(s.greenFee);
-  const weatherText = [weatherState.temp, weatherState.wind].filter(Boolean).join(' · ');
+  const weatherText = formatWeatherForSetup();
 
   return `
     <div class="screen">
@@ -606,6 +956,13 @@ function renderSetup() {
           <span class="toggle-label ${tee === 'red' ? '' : 'dim'}">Red Tees</span>
         </div>
         <div class="row-toggle">
+          <span class="toggle-label ${ratingSet === 'male' ? '' : 'dim'}">Men's Ratings</span>
+          <div class="switch rating-set ${ratingSet === 'male' ? 'state-a' : 'state-b'}" id="toggle-rating-set">
+            <div class="knob"></div>
+          </div>
+          <span class="toggle-label ${ratingSet === 'female' ? '' : 'dim'}">Ladies' Ratings</span>
+        </div>
+        <div class="row-toggle">
           <span class="toggle-label ${statsOn ? '' : 'dim'}">Show Stats</span>
           <div class="switch ${statsOn ? 'state-a' : 'state-b'}" id="toggle-stats">
             <div class="knob"></div>
@@ -615,12 +972,12 @@ function renderSetup() {
         <div class="field" style="margin-top:8px;">
           <label for="input-membership-fee">Membership Fee</label>
           <input type="text" inputmode="decimal" id="input-membership-fee" value="${escapeAttr(membershipFeeVal)}" placeholder="$1,450" />
-          <p class="field-help">Used to calculate your break-even point and savings in Reports.</p>
+          <p class="field-help">Used to calculate your break-even point and savings in Analytics.</p>
         </div>
         <div class="field" style="margin-bottom:6px;">
           <label for="input-green-fee">Green Fees</label>
           <input type="text" inputmode="decimal" id="input-green-fee" value="${escapeAttr(greenFeeVal)}" placeholder="$45" />
-          <p class="field-help">Per-round rate for 18 holes, used as the non-member comparison in Reports.</p>
+          <p class="field-help">Per-round rate for 18 holes, used as the non-member comparison in Analytics.</p>
         </div>
         <div class="export-row">
           <div class="export-row-text">
@@ -634,6 +991,14 @@ function renderSetup() {
           </button>
         </div>
       </div>
+      <div class="card" style="border:1px dashed var(--ink-muted); margin-top:12px;">
+        <span class="toggle-label dim" style="display:block; margin-bottom:10px;">Testing (temporary)</span>
+        <p class="field-help" style="margin-top:0;">Loads a random 20-round dataset into Analytics for testing. Your real round history (if any) is backed up and restored by Clear — remove this card once we're done.</p>
+        <div class="btn-row" style="margin-top:10px;">
+          <button class="btn small secondary" id="btn-load-test-data">Load Test Data</button>
+          <button class="btn small secondary" id="btn-clear-test-data">Clear Test Data</button>
+        </div>
+      </div>
       <div style="margin-top:auto;">
         <button class="btn" id="btn-save-setup">Save</button>
       </div>
@@ -645,55 +1010,38 @@ function escapeAttr(str) {
   return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
-// ===================== Screen: Home =====================
+// Pass 7: the old "Screen: Home" dashboard (Play 18/Play 9 buttons, Resume,
+// pending-nine card, Reports/Settings links) is gone — it was never part of
+// the design spec. Reports and Settings are already reachable from the
+// hamburger menu on every screen.
 
-function renderHome() {
+// ===================== Screen: Start Round =====================
+//
+// The real post-Setup landing screen (per Paul): Setup -> Save -> Start
+// Round, and this is also where a launched/installed PWA lands and where
+// the hamburger menu's "Play Round" item goes — never straight into Hole 1.
+// Only the "Start Round" button actually begins play.
+function renderStartRound() {
   const settings = state.settings || {};
-  const cr = state.currentRound;
-  const resuming = cr && Array.isArray(cr.holes) && cr.holes.length < cr.sessionLength;
-  const pending = readJSON(KEYS.PENDING_NINE, null);
-
-  let mainAction = '';
-  if (resuming) {
-    const nextHoleNum = cr.startHoleNum + cr.holes.length;
-    mainAction = `
-      <button class="btn" id="btn-resume">Resume Round — Hole ${nextHoleNum}</button>
-      <button class="btn ghost" id="btn-discard-inprogress" style="margin-top:10px;">End / discard round in progress</button>
-    `;
-  } else if (pending) {
-    const otherHalf = pending.half === 'front' ? 'back' : 'front';
-    const otherHalfLabel = otherHalf === 'front' ? 'Front 9 (holes 1-9)' : 'Back 9 (holes 10-18)';
-    const dateLabel = new Date(pending.date).toLocaleDateString('en-CA');
-    mainAction = `
-      <div class="pending-card">
-        <div class="pending-title">Unfinished ${pending.half === 'front' ? 'Front' : 'Back'} 9</div>
-        <p>Played ${dateLabel} — score ${pending.nineScore}. Play the ${otherHalfLabel} to complete this round.</p>
-        <button class="btn" id="btn-play-other-nine">Play ${otherHalf === 'front' ? 'Front' : 'Back'} 9 to Finish</button>
-        <button class="btn ghost" id="btn-discard-pending" style="margin-top:8px;">Discard this nine</button>
-      </div>
-      <div class="btn-row" style="margin-top:6px;">
-        <button class="btn secondary" id="btn-play-18">Play 18 Holes</button>
-        <button class="btn secondary" id="btn-play-9">Play 9 Holes</button>
-      </div>
-    `;
-  } else {
-    mainAction = `
-      <button class="btn" id="btn-play-18">Play 18 Holes</button>
-      <button class="btn secondary" id="btn-play-9" style="margin-top:10px;">Play 9 Holes</button>
-    `;
-  }
+  const playerName = (settings.playerName || '').split(' ')[0];
 
   return `
-    <div class="screen">
-      ${topbarHTML()}
-      <div class="home-hero">
-        <h1>A Bit of Bogey</h1>
-        ${settings.playerName ? `<div class="player-name">Welcome back, ${escapeAttr(settings.playerName)}</div>` : ''}
+    <div class="screen pinned-nav">
+      <div class="screen-scroll">
+        ${topbarHTML()}
+        <div class="hole-top-row">
+          <div>
+            <h1>Ready?</h1>
+            <div class="start-round-date">${todayLabel()}</div>
+          </div>
+          <div class="start-round-weather" id="start-weather-readout">${formatWeatherForStartRound()}</div>
+        </div>
+        ${playerName ? `<div class="start-round-greeting">Good luck, ${escapeAttr(playerName)}</div>` : ''}
+        <div class="start-round-quote">&quot;It takes a lot of balls to play this game.&quot;</div>
+        <div class="hole-photo" style="background-image:url('assets/00-Start.png');"></div>
       </div>
-      ${mainAction}
-      <div class="home-links">
-        <a href="#" id="link-reports">Reports</a>
-        <a href="#" id="link-settings">Settings</a>
+      <div class="btn-row nav-row">
+        <button class="btn" id="btn-start-round">Start Round</button>
       </div>
     </div>
   `;
@@ -710,7 +1058,6 @@ function renderHole() {
   const redInfo = redHoles.find((h) => h.holeNum === d.holeNum) || {};
   const isLastOfSession = (cr.holes.length + 1) >= cr.sessionLength;
   const playerName = cr.playerName || '';
-  const nextLabel = isLastOfSession ? 'Finish' : ('Play It' + (playerName ? ' ' + playerName.split(' ')[0] : ''));
   // Pass 6 Fix 5: every hole 2-18 gets a Back button alongside Next — except
   // the very first hole played in this session (nothing committed yet in
   // currentRound.holes, so there's nothing to go back to). This is based on
@@ -718,39 +1065,54 @@ function renderHole() {
   // back-9 session (starts at Hole 10 with zero holes committed) also
   // correctly gets no Back button on its first hole.
   const showBack = cr.holes.length > 0;
+  // Pass 7: "Play It [Name]" is only the very first hole's wording (no Back
+  // button yet, same condition as showBack) — every other hole says "Next"
+  // per spec, regardless of player name. Was wrongly showing "Play It" on
+  // every non-final hole.
+  const nextLabel = isLastOfSession ? 'Finish' : (showBack ? 'Next' : ('Play It' + (playerName ? ' ' + playerName.split(' ')[0] : '')));
 
   const photoNum = pad2(d.holeNum);
+  // Pass 7 (2026-07-24): Hole 2's photo alone gets a custom crop (bottom-
+  // anchored — was losing detail low in the frame at the shared class's
+  // default center position). Per Paul: a one-off inline override here,
+  // rather than changing .hole-photo's shared background-position for every
+  // hole screen (tried that first; it affected other images for the worse).
+  // Every other hole keeps the class default untouched.
+  const photoPositionStyle = d.holeNum === 2 ? 'background-position:center bottom;' : '';
 
   return `
-    <div class="screen">
-      ${topbarHTML()}
-      <div class="hole-top-row">
-        <div class="hole-header">
-          <h1>Hole ${d.holeNum} · Par ${d.par}</h1>
+    <div class="screen pinned-nav">
+      <div class="screen-scroll">
+        ${topbarHTML()}
+        <div class="hole-top-row">
+          <div class="hole-header">
+            <h1>Hole ${d.holeNum} · Par ${d.par}</h1>
+          </div>
+          <div class="hole-yardages">
+            <span class="yard"><span class="dot blue"></span>${blueInfo.yardage || ''}</span>
+            <span class="yard"><span class="dot red"></span>${redInfo.yardage || ''}</span>
+          </div>
         </div>
-        <div class="hole-yardages">
-          <span class="yard"><span class="dot blue"></span>${blueInfo.yardage || ''}</span>
-          <span class="yard"><span class="dot red"></span>${redInfo.yardage || ''}</span>
+        <div class="stroke-panel-wrap">
+          <div class="stroke-panel">
+            <button class="score-btn" id="score-minus" aria-label="Decrease score">−</button>
+            <div class="score-value" id="score-value">${d.score}</div>
+            <button class="score-btn" id="score-plus" aria-label="Increase score">+</button>
+          </div>
         </div>
+        <div class="rockers-row">
+          ${rockerHTML('fir', 'FIR', d.fir, d.par === 3 /* Pass 7 (2026-07-24): FIR hidden on every par-3 hole, per Paul — confirmed via a Hole 7 visual test first. Reverses the earlier Pass 5 "FIR shown on every hole including par-3s" owner decision. visibility:hidden (not display:none) so GIR/PEN/UD/Putts keep their exact column positions instead of shifting left. */)}
+          ${rockerHTML('gir', 'GIR', d.gir)}
+          ${rockerHTML('pen', 'PEN', d.pen)}
+          ${rockerHTML('ud', 'UD', d.ud)}
+          ${puttsColumnHTML(d.putts)}
+        </div>
+        <div class="hole-photo" style="background-image:url('assets/${photoNum}-Hole.png');${photoPositionStyle}"></div>
       </div>
-      <div class="score-row">
-        <button class="score-btn" id="score-minus" aria-label="Decrease score">−</button>
-        <div class="score-value" id="score-value">${d.score}</div>
-        <button class="score-btn" id="score-plus" aria-label="Increase score">+</button>
-      </div>
-      <div class="rockers-row">
-        ${rockerHTML('fir', 'FIR', d.fir)}
-        ${rockerHTML('gir', 'GIR', d.gir)}
-        ${rockerHTML('pen', 'PEN', d.pen)}
-        ${rockerHTML('ud', 'UD', d.ud)}
-        ${puttsColumnHTML(d.putts)}
-      </div>
-      <div class="hole-photo" style="background-image:url('assets/${photoNum}-Hole.png');"></div>
-      <div class="btn-row">
-        ${showBack ? '<button class="btn secondary" id="btn-back-hole">Back</button>' : ''}
+      <div class="btn-row nav-row">
+        ${showBack ? '<button class="btn" id="btn-back-hole">Back</button>' : ''}
         <button class="btn" id="btn-next-hole">${nextLabel}</button>
       </div>
-      <div class="quit-link"><button id="btn-quit">Quit</button></div>
     </div>
   `;
 }
@@ -767,12 +1129,15 @@ function renderHole() {
 // `.rocker-label.on` / plain `.rocker-label` CSS rule in styles.css, which
 // also branches on body.dark-mode for the two color pairs the reference's
 // `light` prop selects between.
-function rockerHTML(key, label, on) {
+// hidden: keeps the column occupying its grid cell (so the remaining rockers
+// don't shift to fill the gap) but renders nothing and isn't clickable —
+// visibility:hidden rather than display:none, per Paul's Hole 7 FIR test.
+function rockerHTML(key, label, on, hidden = false) {
   const knobTop = on ? TOGGLE_KNOB_ON_POS : TOGGLE_KNOB_OFF_POS;
   const knobBg = on ? TOGGLE_ON_GRADIENT : TOGGLE_OFF_GRADIENT;
   const knobShadow = on ? TOGGLE_ON_SHADOW : TOGGLE_OFF_SHADOW;
   return `
-    <div class="rocker-col">
+    <div class="rocker-col"${hidden ? ' style="visibility:hidden;"' : ''}>
       <div class="rocker-lift">
         <button class="rocker-pill" data-key="${key}" id="rocker-${key}" aria-label="${label}" aria-pressed="${on ? 'true' : 'false'}">
           <span class="knob" style="top:${knobTop};background:${knobBg};box-shadow:${knobShadow};"></span>
@@ -818,6 +1183,9 @@ function renderFinalScore() {
     date: new Date().toISOString(),
     playerName: cr.playerName,
     tee: cr.tee,
+    ratingSet: cr.ratingSet,
+    tempC: cr.tempC,
+    windKmh: cr.windKmh,
     holes: cr.holes
   });
   const front = preview.holes.slice(0, 9);
@@ -828,93 +1196,145 @@ function renderFinalScore() {
   const scoreRowCells = (arr) => arr.map((h) => scoreCellHTML(h.score, h.par)).join('');
 
   return `
-    <div class="screen">
-      ${topbarHTML()}
-      <div class="final-score-header">
-        <h1>Final Score</h1>
-        <div class="total-score">${preview.totalScore}</div>
+    <div class="screen pinned-nav">
+      <div class="screen-scroll">
+        ${topbarHTML()}
+        <div class="final-score-header">
+          <h1>Final Score</h1>
+          <div class="total-score">${preview.totalScore}</div>
+        </div>
+        <div class="scorecard-frame">
+          <table class="scorecard">
+            <thead><tr class="holes-row"><th>H</th>${holeRowCells(front)}<th class="total">Out</th></tr></thead>
+            <tbody>
+              <tr class="par-row"><td>Par</td>${parRowCells(front)}<td class="total">${preview.front9Score != null ? front.reduce((s, h) => s + h.par, 0) : ''}</td></tr>
+              <tr class="score-row-data"><td>${escapeAttr((cr.playerName || 'You').split(' ')[0])}</td>${scoreRowCells(front)}<td class="total">${preview.front9Score}</td></tr>
+            </tbody>
+            <thead><tr class="holes-row"><th>H</th>${holeRowCells(back)}<th class="total">In</th></tr></thead>
+            <tbody>
+              <tr class="par-row"><td>Par</td>${parRowCells(back)}<td class="total">${back.reduce((s, h) => s + h.par, 0)}</td></tr>
+              <tr class="score-row-data"><td>${escapeAttr((cr.playerName || 'You').split(' ')[0])}</td>${scoreRowCells(back)}<td class="total">${preview.back9Score}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="hole-photo final-score-photo" style="background-image:url('assets/18-Score-Card.png');"></div>
       </div>
-      <table class="scorecard">
-        <thead><tr class="holes-row"><th>H</th>${holeRowCells(front)}<th class="total">Out</th></tr></thead>
-        <tbody>
-          <tr class="par-row"><td>Par</td>${parRowCells(front)}<td class="total">${preview.front9Score != null ? front.reduce((s, h) => s + h.par, 0) : ''}</td></tr>
-          <tr class="score-row-data"><td>${escapeAttr((cr.playerName || 'You').split(' ')[0])}</td>${scoreRowCells(front)}<td class="total">${preview.front9Score}</td></tr>
-        </tbody>
-        <thead><tr class="holes-row"><th>H</th>${holeRowCells(back)}<th class="total">In</th></tr></thead>
-        <tbody>
-          <tr class="par-row"><td>Par</td>${parRowCells(back)}<td class="total">${back.reduce((s, h) => s + h.par, 0)}</td></tr>
-          <tr class="score-row-data"><td>${escapeAttr((cr.playerName || 'You').split(' ')[0])}</td>${scoreRowCells(back)}<td class="total">${preview.back9Score}</td></tr>
-        </tbody>
-      </table>
-      <div class="hole-photo" style="background-image:url('assets/00-Bogey-Screen.png'); min-height:200px;"></div>
-      <div class="btn-row">
-        <button class="btn secondary" id="btn-back-to-hole18">Back</button>
+      <div class="btn-row nav-row">
+        <button class="btn" id="btn-back-to-hole18">Back</button>
         <button class="btn" id="btn-save-final">Save</button>
       </div>
     </div>
   `;
 }
 
-// ===================== Screen: Front 9 Score (Pass 6 Fix 6) =====================
+// ===================== Screen: Front 9 Score (Pass 6 Fix 6, Pass 7 Post Now) =====================
 //
 // Shown after Hole 9 completes, in BOTH an 18-hole session mid-flight and a
 // deliberate standalone 9-hole session — see commitHoleAndAdvance() for the
 // routing. Two cases, distinguished by cr.sessionLength:
-//   Case A (sessionLength === 18): a real Continue/Quit toggle. Continue
-//     advances into Hole 10; Quit runs the same save-as-widow flow a mid-
-//     round Quit already uses (half: 'front').
+//   Case A (sessionLength === 18): a real Continue/Post Now toggle. Continue
+//     advances into Hole 10; Post Now runs the same save-as-widow flow a
+//     mid-round quit already uses (half: 'front'). ("Quit" was renamed to
+//     "Post Now" in Pass 7 — saving is the primary action here, not
+//     abandoning anything.)
 //   Case B (sessionLength === 9): a deliberate standalone nine has nothing to
 //     "continue" to, so no toggle is shown — Next is relabeled "Post Now" and
 //     always runs the save flow (this is exactly today's finishSession()
 //     behavior for a 9-hole session, just shown as a reviewable scorecard
 //     first instead of happening silently).
 // Back (either case) pops Hole 9 back into the draft for editing — the
-// Hole-10-only Back exception lives in goBackFromHole(), not here.
+// Hole-10-only Back exception lives in goBackFromHole(), not here. Back is
+// only available before Post Now is tapped; see the posting/posted states
+// below.
+//
+// Pass 7: three states once you're on this screen —
+//   1. Idle — toggle (Case A) or "Post Now" label (Case B) + Back/Next shown.
+//   2. Posting — the real save already ran (see postFrontNineNow()); a
+//      spinner shows for ~2.4s as a pure UI delay, toggle/Back/Next hidden.
+//   3. Posted — "Round Saved." replaces the toggle, Back/Next stay hidden.
+//      Neither has anything left to do: Back has nothing left to edit
+//      (currentRound is already cleared) and Next has nothing left to save.
+//      Menu (Analytics/Play Round/Settings) is the only way forward from
+//      here, or the player just closes the app — the round is already safe.
+// currentRound is null during posting/posted, so front9Snapshot (captured
+// the instant before Post Now clears it) is what keeps the scorecard table
+// on screen through those two states.
 function renderFront9Score() {
   const cr = state.currentRound;
-  const front = cr.holes.slice(0, 9); // exactly the 9 just-committed entries
-  const totalScore = front.reduce((s, h) => s + h.score, 0);
-  const parTotal = front.reduce((s, h) => s + h.par, 0);
+  let front, totalScore, parTotal, playerName, isStandaloneNine;
+
+  if (cr) {
+    front = cr.holes.slice(0, 9); // exactly the 9 just-committed entries
+    totalScore = front.reduce((s, h) => s + h.score, 0);
+    parTotal = front.reduce((s, h) => s + h.par, 0);
+    playerName = cr.playerName;
+    isStandaloneNine = cr.sessionLength === 9;
+  } else if (state.front9Snapshot) {
+    ({ front, totalScore, parTotal, playerName, isStandaloneNine } = state.front9Snapshot);
+  } else {
+    // Defensive fallback — shouldn't happen (posting/posted always follow a
+    // snapshot capture in postFrontNineNow()).
+    front = []; totalScore = 0; parTotal = 0; playerName = ''; isStandaloneNine = false;
+  }
 
   const holeRowCells = front.map((h) => `<th>${h.holeNum}</th>`).join('');
   const parRowCells = front.map((h) => `<td>${h.par}</td>`).join('');
   const scoreRowCells = front.map((h) => scoreCellHTML(h.score, h.par)).join('');
 
-  const isStandaloneNine = cr.sessionLength === 9;
   const continueOn = state.front9Continue !== false;
+  const posting = state.front9Posting;
+  const posted = state.front9Posted;
 
-  const toggleOrPostNowHTML = isStandaloneNine
-    ? `<div class="row-toggle" style="border-bottom:none; justify-content:center;">
+  let actionAreaHTML;
+  if (posting) {
+    actionAreaHTML = `<div class="row-toggle post-status" style="border-bottom:none; justify-content:center;">
+        <div class="spinner" role="status" aria-label="Saving round"></div>
+      </div>`;
+  } else if (posted) {
+    actionAreaHTML = `<div class="row-toggle post-status" style="border-bottom:none; justify-content:center;">
+        <span class="post-confirm">Round Saved.</span>
+      </div>`;
+  } else if (isStandaloneNine) {
+    actionAreaHTML = `<div class="row-toggle" style="border-bottom:none; justify-content:center;">
         <span class="toggle-label">Post Now</span>
-      </div>`
-    : `<div class="row-toggle" style="border-bottom:none; justify-content:center; gap:14px;">
+      </div>`;
+  } else {
+    actionAreaHTML = `<div class="row-toggle" style="border-bottom:none; justify-content:center; gap:14px;">
         <span class="toggle-label ${continueOn ? '' : 'dim'}">Continue</span>
         <div class="switch ${continueOn ? 'state-a' : 'state-b'}" id="toggle-front9">
           <div class="knob"></div>
         </div>
-        <span class="toggle-label ${continueOn ? 'dim' : ''}">Quit</span>
+        <span class="toggle-label ${continueOn ? 'dim' : ''}">Post Now</span>
+      </div>`;
+  }
+
+  const navRowHTML = (posting || posted) ? '' : `
+      <div class="btn-row nav-row">
+        <button class="btn" id="btn-front9-back">Back</button>
+        <button class="btn" id="btn-front9-next">${isStandaloneNine ? 'Post Now' : (continueOn ? 'Next' : 'Post Now')}</button>
       </div>`;
 
   return `
-    <div class="screen">
-      ${topbarHTML()}
-      <div class="final-score-header">
-        <h1>Front 9 Score</h1>
-        <div class="total-score">${totalScore}</div>
+    <div class="screen pinned-nav">
+      <div class="screen-scroll">
+        ${topbarHTML()}
+        <div class="final-score-header">
+          <h1>Front 9 Score</h1>
+          <div class="total-score">${totalScore}</div>
+        </div>
+        <div class="scorecard-frame">
+          <table class="scorecard">
+            <thead><tr class="holes-row"><th>H</th>${holeRowCells}<th class="total">Out</th></tr></thead>
+            <tbody>
+              <tr class="par-row"><td>Par</td>${parRowCells}<td class="total">${parTotal}</td></tr>
+              <tr class="score-row-data"><td>${escapeAttr((playerName || 'You').split(' ')[0])}</td>${scoreRowCells}<td class="total">${totalScore}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        ${actionAreaHTML}
+        <div class="hole-photo" style="background-image:url('assets/09-Score-Card.png');"></div>
       </div>
-      <table class="scorecard">
-        <thead><tr class="holes-row"><th>H</th>${holeRowCells}<th class="total">Out</th></tr></thead>
-        <tbody>
-          <tr class="par-row"><td>Par</td>${parRowCells}<td class="total">${parTotal}</td></tr>
-          <tr class="score-row-data"><td>${escapeAttr((cr.playerName || 'You').split(' ')[0])}</td>${scoreRowCells}<td class="total">${totalScore}</td></tr>
-        </tbody>
-      </table>
-      ${toggleOrPostNowHTML}
-      <div class="hole-photo" style="background-image:url('assets/09-Score-Card.png'); min-height:200px;"></div>
-      <div class="btn-row">
-        <button class="btn secondary" id="btn-front9-back">Back</button>
-        <button class="btn" id="btn-front9-next">${isStandaloneNine ? 'Post Now' : 'Next'}</button>
-      </div>
+      ${navRowHTML}
     </div>
   `;
 }
@@ -965,15 +1385,29 @@ function fmtSigned(v, decimals = 1, fallback = '—') {
   return (v >= 0 ? '+' : '') + v.toFixed(decimals);
 }
 
-// A simple 4-column bar chart (Birdie/Par/Bogey/Bogey+ style), pct-driven.
+// A simple 4-column bar chart (<= Birdie/Par/Bogey/Bogey+ style), pct-driven.
+//
+// Design pass 2026-07-25 (Paul's Analytics mockup): value sits ABOVE its bar
+// rather than below, and the columns are wide slabs rather than thin bars.
+// Because `.bar-row` bottom-aligns its columns, a value placed first in the
+// column floats just above that bar's top edge — so the numbers step up and
+// down with the data, which is what the mockup shows.
+//
+// A true zero draws a thin flat baseline rather than nothing: it anchors the
+// column so the four read as a set, and `.bar-zero` removes the top corner
+// radius so it reads as a baseline rule and not a stunted bar.
 function barRowHTML(items) {
   const max = Math.max(1, ...items.map((i) => i.pct));
-  return `<div class="bar-row">${items.map((i) => `
+  return `<div class="bar-row thick">${items.map((i) => {
+    const zero = i.pct === 0;
+    const h = zero ? 3 : Math.max(6, Math.round((i.pct / max) * 100));
+    return `
     <div class="bar-col">
-      <div class="bar" style="height:${Math.max(4, Math.round((i.pct / max) * 100))}px;"></div>
       <div class="bar-value">${i.pct}%</div>
+      <div class="bar${zero ? ' bar-zero' : ''}" style="height:${h}px;"></div>
       <div class="bar-label">${i.label}</div>
-    </div>`).join('')}</div>`;
+    </div>`;
+  }).join('')}</div>`;
 }
 
 // Score-differential bars for Best 8 of Last 20.
@@ -1012,52 +1446,186 @@ function holeRatingBarsHTML(holeRatings) {
 const WEEKLY_METRIC_LABELS = { birdie: 'Birdies', par: 'Pars', bogey: 'Bogeys', bogeyPlus: 'Bogey+' };
 
 function weeklySectionHTML(weekly, newSlotIndex) {
+  // Same wide-slab treatment as Today's Round (2026-07-25, per Paul's spec
+  // screenshots): `.bar-row.thick`, and the value ABOVE its bar rather than
+  // below. Because `.bar-row` bottom-aligns its columns, a value placed first
+  // in the column floats just above that bar's top edge, so the numbers step
+  // with the data.
+  //
+  // Three distinct bar states, deliberately kept apart:
+  //   no rounds that week -> grey 4px `bar-empty`, value shown as an em dash
+  //   played, none scored -> 3px `bar-zero` baseline rule (flat top corners)
+  //   otherwise           -> proportional slab
+  // "Didn't play" and "played and scored none" must not collapse into the
+  // same shape.
   return ['birdie', 'par', 'bogey', 'bogeyPlus'].map((key) => {
     const slots = weekly[key];
     const max = Math.max(1, ...slots.map((s) => (s.hasData ? s.count : 0)));
-    const bars = slots.map((s, i) => `
+    const bars = slots.map((s, i) => {
+      const isNew = i === newSlotIndex ? ' bar-new' : '';
+      let cls;
+      let height;
+      if (!s.hasData) {
+        cls = ' bar-empty';
+        height = 4;
+      } else if (s.count === 0) {
+        cls = ' bar-zero';
+        height = 3;
+      } else {
+        cls = '';
+        height = Math.max(6, Math.round((s.count / max) * 100));
+      }
+      return `
       <div class="bar-col">
-        <div class="bar${s.hasData ? '' : ' bar-empty'}${i === newSlotIndex ? ' bar-new' : ''}" style="height:${s.hasData ? Math.max(4, Math.round((s.count / max) * 100)) : 4}px;"></div>
         <div class="bar-value">${s.hasData ? s.count : '—'}</div>
+        <div class="bar${cls}${isNew}" style="height:${height}px;"></div>
         <div class="bar-label">${s.label}</div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
     return `
       <div class="report-section">
         <h2 class="report-heading">${WEEKLY_METRIC_LABELS[key]} Each Week</h2>
-        <div class="bar-row">${bars}</div>
+        <div class="bar-row thick">${bars}</div>
       </div>`;
   }).join('');
 }
 
-function todaysStatsHTML(t) {
-  const dateLabel = new Date(t.date).toLocaleDateString('en-CA');
+function todaysStatsHTML(t, roundsToDate) {
+  // "Today's Round" — six equal tiles (3 across x 2 down) with the Actual Score
+  // as a hero beside them, per Paul's sketch.
+  //
+  // RTD (Rounds to Date) holds the sixth slot, and reads the SAME value the
+  // Membership ROI section calls Rounds Played — stats.js roundsToDate(), which
+  // prefers the membership figure over rounds-history.length. One acronym must
+  // mean one number; it previously showed logged rounds here (20) and rounds on
+  // the membership there (54), which is exactly the kind of near-duplicate
+  // terminology this screen is meant to avoid. CH was only ever there to make
+  // the net arithmetic legible, and "Course Handicap" is exactly the kind of
+  // near-duplicate term ("handicap" / "Handicap Index" / "Course Handicap")
+  // that loses a recreational player. Net is a concept golfers already accept
+  // without it being spelled out, so the allowance is not shown. RTD answers
+  // something no scorecard shows and anyone building a history cares about:
+  // how far along am I.
+  const tile = (value, label) =>
+    `<div class="today-tile"><div class="today-tile-value">${value}</div>` +
+    `<div class="today-tile-label">${label}</div></div>`;
+  const dash = (v) => (v === null || v === undefined ? '—' : v);
   return `
     <div class="report-section">
-      <h2 class="report-heading">Today's Stats <span class="report-sub">${dateLabel} · Score ${t.totalScore}</span></h2>
+      <h2 class="report-heading">Today's Round</h2>
+      <div class="today-round">
+        <div class="today-grid">
+          ${tile(t.fir.count, 'FIR')}
+          ${tile(t.gir.count, 'GIR')}
+          ${tile(t.pen.count, 'PEN')}
+          ${tile(t.ud.count, 'UD')}
+          ${tile(t.putts, 'PUTTS')}
+          ${tile(roundsToDate, 'RTD')}
+        </div>
+        <div class="today-hero">
+          <div class="today-hero-score">${t.totalScore}</div>
+          <div class="today-hero-net">Net: ${dash(t.net)}</div>
+        </div>
+      </div>
       ${barRowHTML([
-        { label: 'Birdie', pct: t.birdie.pct },
+        { label: '\u2264 Birdie', pct: t.birdie.pct },
         { label: 'Par', pct: t.par.pct },
         { label: 'Bogey', pct: t.bogey.pct },
         { label: 'Bogey+', pct: t.bogeyPlus.pct }
       ])}
-      <table class="stat-table">
-        <tr><td>FIR</td><td>${t.fir.pct}%</td></tr>
-        <tr><td>GIR</td><td>${t.gir.pct}%</td></tr>
-        <tr><td>Putts</td><td>${t.putts}</td></tr>
-      </table>
     </div>`;
 }
 
-function membershipROIHTML(roi) {
-  const savedLabel = roi.cumulativeSavings >= 0 ? 'Saved So Far' : 'Behind By';
+// Last 10 Rounds — Actual Score per round, oldest left, most recent right.
+// Appears once 10 rounds are logged.
+//
+// Bars are proportional to the highest score in the window, so they sit at
+// similar heights by design: ten rounds inside a few strokes of each other
+// SHOULD look level. The numbers above carry the detail; the bars carry the
+// shape. Scrollable, since ten slabs won't fit a phone width.
+function lastTenHTML(lastTen) {
+  const max = Math.max(1, ...lastTen.map((r) => r.totalScore));
+  const bars = lastTen.map((r) => `
+      <div class="bar-col">
+        <div class="bar-value">${r.totalScore}</div>
+        <div class="bar" style="height:${Math.max(6, Math.round((r.totalScore / max) * 100))}px;"></div>
+      </div>`).join('');
+  return `
+    <div class="report-section">
+      <h2 class="report-heading">Last 10 Rounds</h2>
+      <div class="bar-row thick scroll">${bars}</div>
+      <p class="report-note">Last 10 rounds, most recent on the right.</p>
+    </div>`;
+}
+
+// Off-season rounds table — the ONLY place these are entered.
+//
+// Steppers, deliberately, not an "Add" button. The number on screen IS the
+// number stored, so revisiting in February shows what January's session
+// recorded and a correction is the same gesture as an entry. An Add control
+// would store transactions instead of state, and then "did I already enter
+// December?" becomes unanswerable without remembering what you did last time —
+// which is precisely the failure this replaces.
+//
+// The `logged` column is the second guard: October and March are months a
+// proper round may well have been played and captured live, and showing that
+// count stops the same round being tallied on top of itself.
+function offSeasonTableHTML(offSeason) {
+  // Uses .stat-table so the typography matches the ROI rows directly above —
+  // same 14px, muted label left, bold figure right. The stepper sits in the
+  // value cell where the dollar amounts sit, so the two tables read as one.
+  const rows = offSeason.months.filter((m) => !m.future).map((m) => `
+    <tr>
+      <td>${m.label}${m.logged ? ` <span class="os-logged">${m.logged} logged</span>` : ''}</td>
+      <td class="os-step">
+        <button class="os-btn" data-os-key="${m.key}" data-os-delta="-1"
+                aria-label="One fewer round in ${m.label}"${m.tally ? '' : ' disabled'}>&minus;</button>
+        <span class="os-count">${m.tally}</span>
+        <button class="os-btn" data-os-key="${m.key}" data-os-delta="1"
+                aria-label="One more round in ${m.label}">+</button>
+      </td>
+    </tr>`).join('');
+  return `
+    <h3 class="os-heading">Off-Season Rounds</h3>
+    <p class="os-note">Counts toward your membership, not your stats.</p>
+    <table class="stat-table os-table">
+      ${rows}
+    </table>`;
+}
+
+function membershipROIHTML(roi, offSeason) {
+  // Rounds Played is RTD — rounds on the membership, which can predate the app
+  // (stats.js roundsToDate).
+  //
+  // Two groups, separated by a rule: what the membership COSTS (fee, green fee,
+  // break-even, rounds played) above; what it has RETURNED below. Per-round
+  // cost falls with every round and crosses under the green fee at break-even,
+  // which is the moment "Today's Savings" turns positive.
+  //
+  // Money renders without trailing .00 — $1,450 and $980 read as figures,
+  // $1,450.00 reads as an invoice. Cents show only when there are cents.
+  const money = (n) => {
+    const v = Number(n);
+    const abs = Math.abs(v);
+    const body = abs.toLocaleString('en-CA', {
+      minimumFractionDigits: Number.isInteger(abs) ? 0 : 2,
+      maximumFractionDigits: 2
+    });
+    return (v < 0 ? '-$' : '$') + body;
+  };
   return `
     <div class="report-section">
       <h2 class="report-heading">Membership ROI</h2>
       <table class="stat-table">
+        <tr><td>Membership</td><td>${money(roi.membershipFee)}</td></tr>
+        <tr><td>Green Fee - 18 Holes</td><td>${money(roi.greenFee)}</td></tr>
+        <tr><td>Break Even</td><td>${roi.roundsToBreakEven} Rounds</td></tr>
         <tr><td>Rounds Played</td><td>${roi.roundsPlayed}</td></tr>
-        <tr><td>${savedLabel}</td><td>$${Math.abs(roi.cumulativeSavings).toFixed(2)}</td></tr>
-        <tr><td>Rounds to Break Even</td><td>${roi.roundsToBreakEven}</td></tr>
+        <tr class="stat-row-group"><td>Per Round Cost to Date</td><td>${roi.perRoundCostToDate === null ? '—' : money(roi.perRoundCostToDate)}</td></tr>
+        <tr><td>Today's Savings</td><td>${roi.todaysSavings === null ? '—' : money(roi.todaysSavings)}</td></tr>
+        <tr><td>Savings to Date</td><td>${money(roi.cumulativeSavings)}</td></tr>
       </table>
+      ${offSeason && offSeason.visible ? offSeasonTableHTML(offSeason) : ''}
     </div>`;
 }
 
@@ -1088,45 +1656,57 @@ function reportsEmptyHTML() {
 }
 
 function reportsFullHTML(a) {
-  const windowLabel = 'Last ' + Math.min(a.roundsCount, 20) + ' round' + (Math.min(a.roundsCount, 20) === 1 ? '' : 's');
+  // Every "last 20" label reads off the rounds actually on record, so a player
+  // three rounds in isn't told they're looking at 20 (2026-07-25).
+  const windowN = Math.min(a.roundsCount, 20);
+  const windowLabel = `Last ${windowN} round${windowN === 1 ? '' : 's'}`;
+  const windowLabelTitle = `Last ${windowN} Round${windowN === 1 ? '' : 's'}`;
 
-  const seasonStats = `
-    <div class="report-section">
-      <h2 class="report-heading">Season Stats <span class="report-sub">${windowLabel}</span></h2>
-      <div class="stat-tile-grid">
-        <div class="stat-tile"><div class="stat-tile-value">${fmtNum(a.season.scoringAvg)}</div><div class="stat-tile-label">Scoring Avg</div></div>
-        <div class="stat-tile"><div class="stat-tile-value">${a.season.bestRound ?? '—'}</div><div class="stat-tile-label">Best Round</div></div>
-        <div class="stat-tile"><div class="stat-tile-value">${a.season.worstRound ?? '—'}</div><div class="stat-tile-label">Worst Round</div></div>
-        <div class="stat-tile"><div class="stat-tile-value">${fmtNum(a.season.puttsPerRound)}</div><div class="stat-tile-label">Putts/Rnd</div></div>
-        <div class="stat-tile"><div class="stat-tile-value">${a.season.fir.pct}%</div><div class="stat-tile-label">FIR</div></div>
-        <div class="stat-tile"><div class="stat-tile-value">${a.season.gir.pct}%</div><div class="stat-tile-label">GIR</div></div>
-      </div>
-    </div>`;
+  // Season Stats removed 2026-07-25 (Paul): from install through ~20 rounds it
+  // offered nothing useful — scoring average, best and worst are the same
+  // number at one round and barely separate for several more, and FIR/GIR
+  // percentages duplicate what Today's Round already shows as counts. If it
+  // ever returns it should be gated on 20 rounds, not rendered from round one.
 
-  const scoreDistribution = `
-    <div class="report-section">
-      <h2 class="report-heading">Score Distribution <span class="report-sub">${windowLabel}</span></h2>
-      ${barRowHTML([
-        { label: 'Birdie', pct: a.scoreDistribution.birdie.pct },
-        { label: 'Par', pct: a.scoreDistribution.par.pct },
-        { label: 'Bogey', pct: a.scoreDistribution.bogey.pct },
-        { label: 'Bogey+', pct: a.scoreDistribution.bogeyPlus.pct }
-      ])}
-    </div>`;
+  // Score Distribution removed 2026-07-25 (Paul): it drew the identical four
+  // buckets with the identical legend as the bar row inside Today's Round —
+  // two charts saying the same thing on one screen. The per-round version was
+  // kept because it means something from round one; the 20-round version, like
+  // Season Stats, says nothing until the history is deep enough to matter.
+  // The weekly Birdies/Pars/Bogeys/Bogey+ charts are the deliberate exception:
+  // they are the "tweener" content for the ~7 weeks before 20 rounds exist.
 
+  // WHS establishes no Handicap Index below 3 scores (Rule 5.2a), so anything
+  // shown before then is the app's own estimate and is labelled as one. The
+  // estimate uses the same formula the real Index will use at round 3 (lowest
+  // differential − 2.0), so the number doesn't lurch when it becomes official.
+  const hs = a.handicapStatus || { status: null };
+  const isEstimate = hs.status === 'estimate';
   const handicapSection = `
     <div class="report-section">
-      <h2 class="report-heading">Handicap Index</h2>
+      <h2 class="report-heading">${isEstimate ? 'Estimated Handicap' : 'Handicap Index'}</h2>
       <div class="handicap-readout">${a.handicap !== null ? a.handicap.toFixed(1) : '—'}</div>
-      <div class="report-sub" style="margin-bottom:8px;">Best 8 Score Differentials of Last 20 Rounds</div>
+      ${isEstimate
+        ? `<div class="report-sub" style="margin-bottom:8px;">Estimate — ${hs.roundsToEstablish} more round${hs.roundsToEstablish === 1 ? '' : 's'} to establish a Handicap Index</div>`
+        : ''}
+      <div class="report-sub" style="margin-bottom:8px;">${
+        // Not always 8: with fewer than 20 rounds on record, WHS Rule 5.2a
+        // counts fewer differentials (e.g. lowest 3 at 9-11 rounds), so the
+        // label reads off what was actually used rather than hard-coding "8".
+        a.best8Differentials.length
+          ? `Lowest ${a.best8Differentials.length} Score Differential${a.best8Differentials.length === 1 ? '' : 's'} of the ${windowLabelTitle}`
+          : 'Score Differentials'
+      }</div>
       ${a.best8Differentials.length
         ? diffBarRowHTML(a.best8Differentials)
-        : '<p class="section-empty">No rounds on a recognized tee yet — Score Differential needs Course Rating/Slope from your tee.</p>'}
+        : (a.handicap === null
+            ? '<p class="section-empty">A Handicap Index needs at least 3 rounds (WHS Rule 5.2a).</p>'
+            : '<p class="section-empty">No rounds on a recognized tee yet — Score Differential needs Course Rating/Slope from your tee.</p>')}
     </div>`;
 
   const twentyRoundAvg = `
     <div class="report-section">
-      <h2 class="report-heading">20 Round Average</h2>
+      <h2 class="report-heading">${windowN} Round Average</h2>
       <table class="stat-table">
         <tr><td>FIR</td><td>${a.twentyRoundAvg.fir.pct}%</td></tr>
         <tr><td>GIR</td><td>${a.twentyRoundAvg.gir.pct}%</td></tr>
@@ -1164,18 +1744,27 @@ function reportsFullHTML(a) {
       <p class="section-empty">Play one more round (2 total) to unlock weekly trends.</p>
     </div>`).join('');
 
-  const todaysStats = a.todaysVisible && a.todaysStats ? todaysStatsHTML(a.todaysStats) : '';
+  const todaysStats = a.todaysVisible && a.todaysStats ? todaysStatsHTML(a.todaysStats, a.roundsToDate) : '';
 
   const membershipRoi = a.roi
-    ? membershipROIHTML(a.roi)
+    ? membershipROIHTML(a.roi, a.offSeason)
     : `
     <div class="report-section">
       <h2 class="report-heading">Membership ROI</h2>
       <p class="section-empty">Set up your membership fee and green fee in Settings to see savings.</p>
     </div>`;
 
-  return seasonStats + todaysStats + scoreDistribution + handicapSection + twentyRoundAvg
-    + holeRatings + scramblingPutting + weeklyTrends + membershipRoi;
+  // Handicap Index, 20 Round Average, Hole Ratings and Scrambling & Putting are
+  // BUILT ABOVE BUT NOT RENDERED (2026-07-25, Paul). They are all 20-round
+  // stats and belong further down the page than the weekly charts, which are
+  // the "tweener" content for the ~7 weeks before 20 rounds exist. Their exact
+  // position and presentation are still being designed.
+  //
+  // Kept assembled rather than deleted so restoring one is a matter of dropping
+  // it back into this return in the right order — nothing needs rebuilding.
+  const lastTenSection = a.lastTenVisible && a.lastTen.length ? lastTenHTML(a.lastTen) : '';
+
+  return todaysStats + weeklyTrends + lastTenSection + membershipRoi;
 }
 
 // ===================== Event wiring =====================
@@ -1190,8 +1779,10 @@ function attachHandlers() {
     case 'setup': {
       const modeToggle = document.getElementById('toggle-mode');
       const teeToggle = document.getElementById('toggle-tee');
+      const ratingSetToggle = document.getElementById('toggle-rating-set');
       const statsToggle = document.getElementById('toggle-stats');
       let teePref = (state.settings && state.settings.teePref) || 'blue';
+      let ratingSet = (state.settings && state.settings.ratingSet) === 'female' ? 'female' : 'male';
       let statsOn = state.settings ? state.settings.statsTrackingEnabled !== false : true;
       let lightOn = state.settings ? state.settings.lightMode !== false : true;
 
@@ -1217,6 +1808,16 @@ function attachHandlers() {
           labels[1].classList.toggle('dim', teePref !== 'red');
         });
       }
+      if (ratingSetToggle) {
+        ratingSetToggle.addEventListener('click', () => {
+          ratingSet = ratingSet === 'male' ? 'female' : 'male';
+          ratingSetToggle.classList.toggle('state-a', ratingSet === 'male');
+          ratingSetToggle.classList.toggle('state-b', ratingSet === 'female');
+          const labels = ratingSetToggle.parentElement.querySelectorAll('.toggle-label');
+          labels[0].classList.toggle('dim', ratingSet !== 'male');
+          labels[1].classList.toggle('dim', ratingSet !== 'female');
+        });
+      }
       if (statsToggle) {
         statsToggle.addEventListener('click', () => {
           statsOn = !statsOn;
@@ -1235,6 +1836,17 @@ function attachHandlers() {
           showToast('Export coming soon');
         });
       }
+      // TEMPORARY (2026-07-24) — see fetchTestRounds()/loadTestData()/
+      // clearTestData() above renderSetup(); remove alongside those and the
+      // "Testing" card's markup once Analytics work is confirmed.
+      const loadTestBtn = document.getElementById('btn-load-test-data');
+      if (loadTestBtn) {
+        loadTestBtn.addEventListener('click', loadTestData);
+      }
+      const clearTestBtn = document.getElementById('btn-clear-test-data');
+      if (clearTestBtn) {
+        clearTestBtn.addEventListener('click', clearTestData);
+      }
       const saveBtn = document.getElementById('btn-save-setup');
       if (saveBtn) {
         saveBtn.addEventListener('click', () => {
@@ -1244,6 +1856,7 @@ function attachHandlers() {
           saveSetup({
             playerName: (nameInput && nameInput.value.trim()) || '',
             teePref,
+            ratingSet,
             statsTrackingEnabled: statsOn,
             lightMode: lightOn,
             membershipFee: parseFeeInput(feeInput && feeInput.value),
@@ -1256,30 +1869,18 @@ function attachHandlers() {
       fetchWeather();
       break;
     }
-    case 'home': {
-      const play18 = document.getElementById('btn-play-18');
-      const play9 = document.getElementById('btn-play-9');
-      const resume = document.getElementById('btn-resume');
-      const discardInProgress = document.getElementById('btn-discard-inprogress');
-      const playOtherNine = document.getElementById('btn-play-other-nine');
-      const discardPending = document.getElementById('btn-discard-pending');
-      const reportsLink = document.getElementById('link-reports');
-      const settingsLink = document.getElementById('link-settings');
-
-      if (play18) play18.addEventListener('click', () => startRound({ startHoleNum: 1, sessionLength: 18 }));
-      if (play9) play9.addEventListener('click', () => startRound({ startHoleNum: 1, sessionLength: 9 }));
-      if (resume) resume.addEventListener('click', () => resumeIntoHoleScreen());
-      if (discardInProgress) discardInProgress.addEventListener('click', () => quitCurrentRound());
-      if (playOtherNine) {
-        playOtherNine.addEventListener('click', () => {
-          const pending = readJSON(KEYS.PENDING_NINE, null);
-          const otherHalf = pending && pending.half === 'front' ? 'back' : 'front';
-          startRound({ startHoleNum: otherHalf === 'front' ? 1 : 10, sessionLength: 9 });
+    case 'startround': {
+      const startBtn = document.getElementById('btn-start-round');
+      if (startBtn) {
+        startBtn.addEventListener('click', () => {
+          // Non-destructive by construction: resumes an in-progress round
+          // or pairs a waiting nine automatically rather than overwriting
+          // it — see goToPlayRound()'s doc comment. The button always reads
+          // "Start Round" regardless; this just avoids silent data loss.
+          goToPlayRound();
         });
       }
-      if (discardPending) discardPending.addEventListener('click', () => discardPendingNine());
-      if (reportsLink) reportsLink.addEventListener('click', (e) => { e.preventDefault(); state.screen = 'reports'; render(); });
-      if (settingsLink) settingsLink.addEventListener('click', (e) => { e.preventDefault(); state.fromSettings = true; state.screen = 'setup'; render(); });
+      fetchWeather();
       break;
     }
     case 'hole': {
@@ -1290,7 +1891,6 @@ function attachHandlers() {
       const puttsPlus = document.getElementById('putts-plus');
       const nextBtn = document.getElementById('btn-next-hole');
       const backBtn = document.getElementById('btn-back-hole');
-      const quitBtn = document.getElementById('btn-quit');
 
       if (scoreMinus) scoreMinus.addEventListener('click', () => {
         d.score = Math.max(1, d.score - 1);
@@ -1322,7 +1922,6 @@ function attachHandlers() {
       });
       if (nextBtn) nextBtn.addEventListener('click', () => commitHoleAndAdvance());
       if (backBtn) backBtn.addEventListener('click', () => goBackFromHole());
-      if (quitBtn) quitBtn.addEventListener('click', () => quitCurrentRound());
       break;
     }
     case 'finalscore': {
@@ -1334,7 +1933,10 @@ function attachHandlers() {
     }
     case 'front9score': {
       const cr = state.currentRound;
-      const isStandaloneNine = cr.sessionLength === 9;
+      // cr is null once posting/posted (currentRound already cleared) — those
+      // states render with no toggle/Back/Next in the DOM anyway, so the
+      // isStandaloneNine lookup below only needs to succeed while cr exists.
+      const isStandaloneNine = cr ? cr.sessionLength === 9 : false;
       const toggle = document.getElementById('toggle-front9');
       const backBtn = document.getElementById('btn-front9-back');
       const nextBtn = document.getElementById('btn-front9-next');
@@ -1350,21 +1952,42 @@ function attachHandlers() {
         nextBtn.addEventListener('click', () => {
           if (isStandaloneNine) {
             // Case B: standalone 9-hole session — always the save flow.
-            finishFrontNineNow();
+            postFrontNineNow();
           } else if (state.front9Continue !== false) {
             // Case A, Continue: advance into Hole 10.
             goToHoleScreen();
           } else {
-            // Case A, Quit: save this front nine as a widow/paired round.
-            finishFrontNineNow();
+            // Case A, Post Now: save this front nine as a widow/paired round.
+            postFrontNineNow();
           }
         });
       }
       break;
     }
     case 'reports': {
+      // Off-season steppers. Writes the NEW TOTAL for that month, not a delta —
+      // the stored value and the displayed value are the same thing.
+      //
+      // Scroll position is preserved across the re-render: the table sits near
+      // the bottom of a long screen, and jumping to the top after every tap
+      // would make entering six months unusable.
+      document.querySelectorAll('[data-os-key]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const key = btn.getAttribute('data-os-key');
+          const delta = Number(btn.getAttribute('data-os-delta'));
+          const settings = state.settings || {};
+          const current = (settings.offSeasonRounds && settings.offSeasonRounds[key]) || 0;
+          const next = Math.max(0, current + delta);
+          const updated = withOffSeasonRounds(settings, key, next);
+          state.settings = updated;
+          writeJSON(KEYS.SETTINGS, updated);
+          const y = window.scrollY;
+          render();
+          window.scrollTo(0, y);
+        });
+      });
       const homeBtn = document.getElementById('btn-reports-home');
-      if (homeBtn) homeBtn.addEventListener('click', () => { state.screen = 'home'; render(); });
+      if (homeBtn) homeBtn.addEventListener('click', () => goToPlayRound());
       break;
     }
   }
@@ -1390,8 +2013,21 @@ function attachMenuHandlers() {
   if (scrim) scrim.addEventListener('click', closeMenu);
   if (closeBtn) closeBtn.addEventListener('click', closeMenu);
   if (itemAnalytics) itemAnalytics.addEventListener('click', () => { state.menuOpen = false; state.screen = 'reports'; render(); });
-  if (itemPlay) itemPlay.addEventListener('click', () => { state.menuOpen = false; state.screen = 'home'; render(); });
+  if (itemPlay) itemPlay.addEventListener('click', () => { state.menuOpen = false; state.screen = 'startround'; render(); });
   if (itemSettings) itemSettings.addEventListener('click', () => { state.menuOpen = false; state.fromSettings = true; state.screen = 'setup'; render(); });
+
+  // Call Clubhouse is a real <a href="tel:"> — the OS handles dialling, so no
+  // preventDefault and no navigation of our own. The menu is closed on a
+  // deferred tick rather than synchronously: re-rendering during event dispatch
+  // would tear the anchor out of the DOM before the browser acts on it, which
+  // cancels the dial on some platforms. Closing it means returning from the
+  // call drops the player back on the hole they were playing, not on the menu.
+  const itemCall = document.getElementById('menu-item-call');
+  if (itemCall) {
+    itemCall.addEventListener('click', () => {
+      setTimeout(() => { state.menuOpen = false; render(); }, 0);
+    });
+  }
 }
 
 // Lightweight partial re-render for putts (avoids full re-render on every tap).
