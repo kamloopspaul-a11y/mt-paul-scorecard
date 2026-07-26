@@ -68,6 +68,46 @@ body {
   min-height: 100vh;
   display: flex;
   justify-content: center;
+  /* 2026-07-25 (Paul, real device): a tap that carried a slight drag was
+     zooming the page several steps, needing a pinch to get back.
+
+     Not iOS's focus-zoom -- that fires when an input's font-size is under
+     16px and .field's inputs are already exactly 16px. This is double-tap
+     zoom: two taps inside ~300ms and a short distance of each other are
+     treated as the zoom gesture, and the controls most affected are the
+     ones tapped repeatedly (score rockers, off-season steppers), where the
+     second tap of a quick pair lands close enough to the first to qualify.
+
+     `manipulation` means "panning and pinch zoom, but no double-tap zoom",
+     which is the whole fix: the accidental gesture goes away, and pinch --
+     the one Paul uses to recover, and the one WCAG 1.4.4 requires stay
+     available -- is untouched. Set on body rather than per-button because
+     the stray tap often lands just off a control, on the container behind
+     it, where a button-scoped rule would never apply.
+
+     Deliberately NOT done: user-scalable=no / maximum-scale=1 in the
+     viewport meta. It's the commonly suggested fix, iOS Safari has ignored
+     it since iOS 10, and it would kill pinch zoom outright. */
+  touch-action: manipulation;
+}
+
+/* The other half of the "wee swipe instead of a tap" problem: a drag that
+   starts on a control's label used to begin a text selection and raise the
+   selection/callout UI. Controls aren't text to be selected, so opt them
+   out -- a slipped tap now does nothing at all instead of something
+   unwanted. Confined to controls; body copy, scores and the scorecard table
+   stay selectable. */
+button, .btn, .os-btn, .icon-btn, [role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Stops Safari inflating text on orientation change, which would otherwise
+   look like a second, spontaneous kind of resize. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 #app {
