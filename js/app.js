@@ -721,7 +721,33 @@ function render() {
   }
   appEl.innerHTML = html + menuOverlayHTML();
   attachHandlers();
+  syncNavRowHeight();
 }
+
+// The photo above the nav row must clear it by exactly the 2px .hole-photo
+// asks for. .screen-scroll reserves that space with padding-bottom, and the
+// gap only comes out right when that padding equals the nav row's real
+// height -- see the long note on .screen-scroll in css/styles.css for the
+// arithmetic. Measured rather than hardcoded because the buttons render in
+// Hanken Grotesk loaded with font-display:swap: the row is one height in the
+// fallback stack and another once the webfont lands, so any fixed number is
+// wrong on one side of that swap. Cheap -- one offsetHeight read on screens
+// that have a nav row, nothing at all on those that don't.
+function syncNavRowHeight() {
+  const nav = document.querySelector('.screen.pinned-nav .nav-row');
+  if (!nav) return;
+  const h = nav.offsetHeight;
+  if (h) document.documentElement.style.setProperty('--nav-row-h', h + 'px');
+}
+
+// Re-measure on the two events that legitimately change the row's height:
+// the webfont swapping in, and the viewport changing width (buttons are
+// flex:1, so their text can rewrap). Guarded because document.fonts is
+// absent on older engines, where the CSS fallback simply stands.
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(syncNavRowHeight);
+}
+window.addEventListener('resize', syncNavRowHeight);
 
 // Shared topbar markup (logo + hamburger menu button) — every screen except
 // Onboarding uses this exact markup (Pass 6 Fix 3 wires the ⋮ button up to a

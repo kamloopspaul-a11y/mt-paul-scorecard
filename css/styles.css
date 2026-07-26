@@ -143,9 +143,27 @@ body {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  /* Clears the absolutely-positioned nav row below (its own ~52px height +
-     a gap) so scrolled content never ends up hidden underneath it. */
-  padding-bottom: 76px;
+  /* Clears the absolutely-positioned nav row below so scrolled content never
+     ends up hidden underneath it.
+
+     2026-07-25 (Paul, real device): every screen's photo sat 12-16px too high
+     off the nav row instead of the 2px .hole-photo's margin-bottom asks for.
+     The 76px here was the cause -- it double-counted the bottom offset.
+     Measuring up from .screen's bottom edge: .screen's own padding-bottom
+     puts this box's border edge at 32, this padding puts its content edge at
+     32+P, and the photo's 2px margin puts the photo's bottom at 32+P+2. The
+     nav row is absolute at bottom:32 with height H, so its top is at 32+H.
+     The gap is therefore P + 2 - H, NOT the intended 2 -- the 32px offset is
+     already paid for by .screen and must not be added again here. With P=76
+     and a real H of ~62-66px that left 12-16px, exactly what Paul measured.
+     The gap equals 2px only when P == H, so the padding is now the nav row's
+     own measured height, written to --nav-row-h by syncNavRowHeight() in
+     js/app.js after every render, on resize, and again on fonts.ready (the
+     buttons are Hanken Grotesk via font-display:swap, so H changes once the
+     webfont lands and a hardcoded number would be wrong before or after).
+     The fallback matches the fonts-loaded height for the no-JS/pre-measure
+     frame. */
+  padding-bottom: var(--nav-row-h, 62px);
 }
 
 .hidden { display: none !important; }
