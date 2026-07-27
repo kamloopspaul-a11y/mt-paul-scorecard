@@ -1949,29 +1949,89 @@ function barRowHTML(items) {
 }
 
 // Score-differential bars for Best 8 of Last 20.
+// Score differentials, lowest first. Uses the same .bar-row.thick.fit
+// treatment as every other chart on the page (2026-07-26, Paul) — it was a
+// horizontal scroller with narrow columns, so eight bars huddled at the left
+// while the charts above and below them spanned the full width.
+//
+// Value sits ABOVE the bar here, matching Hole Ratings and Last 10 Rounds;
+// it used to hang below, which put the numbers on a different line from every
+// other chart's.
 function diffBarRowHTML(diffs) {
   const maxAbs = Math.max(1, ...diffs.map((d) => Math.abs(d)));
-  return `<div class="bar-row scroll">${diffs.map((d) => `
+  return `<div class="bar-row thick fit">${diffs.map((d) => `
     <div class="bar-col">
-      <div class="bar" style="height:${Math.max(4, Math.round((Math.abs(d) / maxAbs) * 90))}px;"></div>
       <div class="bar-value">${d.toFixed(1)}</div>
+      <div class="bar" style="height:${Math.max(8, Math.round((Math.abs(d) / maxAbs) * 100))}px;"></div>
     </div>`).join('')}</div>`;
 }
 
 // 18-hole "avg strokes over par" bar chart, horizontally scrollable.
+// Value above the bar, H-prefixed labels, all nine on screen (Paul's comp,
+// 2026-07-26). Was bar-then-value with bare numerals in a horizontal scroller;
+// nine bars fit a phone without scrolling, and "H3" reads as a hole where a
+// lone "3" reads as a score.
+// Average ACTUAL strokes per hole, not strokes over par (Paul, 2026-07-26).
+// The question this answers is "how many shots does this hole usually cost me"
+// — a number to scan against par, hoping for 4 or 5 rather than 7.
+//
+// SCALED FROM ZERO, deliberately. Strokes are a count with a real zero, so a
+// 5.25 bar genuinely is taller than a 3.88 bar. Range-scaling would stretch a
+// 1.4-stroke spread across the full height and exaggerate it — and most of that
+// spread is just par: the par 3s sit near 4 and the par 4s near 5. Par itself
+// is deliberately NOT printed (Paul, 2026-07-26: "just the bars"), so a short
+// bar means a short hole, not a hole played well.
 function holeRatingBarsHTML(holeRatings) {
-  const maxAbs = Math.max(0.1, ...holeRatings.map((h) => Math.abs(h.avgOverPar || 0)));
-  return `<div class="bar-row scroll">${holeRatings.map((h) => {
-    const v = h.avgOverPar;
-    const label = v === null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(1);
-    const height = v === null ? 4 : Math.max(4, Math.round((Math.abs(v) / maxAbs) * 90));
-    const goodCls = v !== null && v < 0 ? ' bar-good' : '';
+  const max = Math.max(1, ...holeRatings.map((h) => h.avgStrokes || 0));
+  return `<div class="bar-row thick fit">${holeRatings.map((h) => {
+    const v = h.avgStrokes;
+    const label = v === null ? '—' : v.toFixed(1);
+    const height = v === null ? 4 : Math.max(8, Math.round((v / max) * 100));
     const emptyCls = v === null ? ' bar-empty' : '';
     return `
       <div class="bar-col">
-        <div class="bar${goodCls}${emptyCls}" style="height:${height}px;"></div>
         <div class="bar-value">${label}</div>
-        <div class="bar-label">${h.holeNum}</div>
+        <div class="bar${emptyCls}" style="height:${height}px;"></div>
+        <div class="bar-label">H${h.holeNum}</div>
+      </div>`;
+  }).join('')}</div>`;
+}
+
+// Bar row for plain numbers rather than percentages (Putts / GIR Hole, etc).
+// barRowHTML hard-codes a % suffix and scales from zero; these values sit in a
+// narrow band where zero-scaling flattens them, so it scales within range.
+// Bars for plain counts. Scales from zero, which is correct here — unlike a
+// scoring average, a count of zero is a real, meaningful zero.
+function countBarRowHTML(counts) {
+  const max = Math.max(1, ...counts);
+  return `<div class="bar-row thick fit">${counts.map((c) => `
+      <div class="bar-col">
+        <div class="bar-value">${c}</div>
+        <div class="bar${c === 0 ? ' bar-zero' : ''}" style="height:${c === 0 ? 3 : Math.max(8, Math.round((c / max) * 100))}px;"></div>
+      </div>`).join('')}</div>`;
+}
+
+function valueBarRowHTML(items, dp, signed) {
+  const vals = items.map((i) => i.value).filter((v) => v !== null && v !== undefined);
+  if (!vals.length) return '';
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const span = Math.max(0.1, hi - lo);
+  const floor = lo - span * 1.2, ceil = hi + span * 0.25;
+  return `<div class="bar-row thick fit wide-cols">${items.map((i) => {
+    if (i.value === null || i.value === undefined) {
+      return `
+      <div class="bar-col">
+        <div class="bar-value dim">&mdash;</div>
+        <div class="bar bar-empty" style="height:3px;"></div>
+        <div class="bar-label">${i.label}</div>
+      </div>`;
+    }
+    const h = Math.max(10, Math.round(((i.value - floor) / (ceil - floor)) * 110));
+    return `
+      <div class="bar-col">
+        <div class="bar-value">${signed && i.value >= 0 ? '+' : ''}${i.value.toFixed(dp)}</div>
+        <div class="bar" style="height:${h}px;"></div>
+        <div class="bar-label">${i.label}</div>
       </div>`;
   }).join('')}</div>`;
 }
@@ -2028,9 +2088,19 @@ function weeklySectionHTML(weekly, newSlotIndex) {
   }).join('');
 }
 
-function todaysStatsHTML(t, roundsToDate) {
-  // "Today's Round" — six equal tiles (3 across x 2 down) with the Actual Score
-  // as a hero beside them, per Paul's sketch.
+// "Jul 25 2026" — same shape as the Analytics dateline, but built from a round
+// record's own date rather than new Date(). Local time, matching how every
+// other date-derived stat on the page reads the device's timezone.
+function roundDateLabel(dateStr) {
+  const d = new Date(dateStr);
+  if (isNaN(d)) return '';
+  const m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+  return `${m} ${d.getDate()} ${d.getFullYear()}`;
+}
+
+function todaysStatsHTML(t, roundsToDate, handicap, roundsCount) {
+  // "Last Round: <date>" — six equal tiles (3 across x 2 down) with the Actual
+  // Score as a hero beside them, per Paul's sketch.
   //
   // RTD (Rounds to Date) holds the sixth slot, and reads the SAME value the
   // Membership ROI section calls Rounds Played — stats.js roundsToDate(), which
@@ -2050,7 +2120,23 @@ function todaysStatsHTML(t, roundsToDate) {
   const dash = (v) => (v === null || v === undefined ? '—' : v);
   return `
     <div class="report-section">
-      <h2 class="report-heading">Today's Round</h2>
+      <!-- "Last Round: <date>" (Paul, 2026-07-27), replacing "Today's Round".
+           The section has always read mostRecentRound() — see the "most recent
+           round only" comment on todaysStats in stats.js — so the old heading
+           was the one outright false claim on the page whenever the newest
+           round wasn't from today, which is most of the time. The dateline
+           above renders new Date() and made it worse: on 2026-07-27 the page
+           printed "Jul 27 2026" over a round played on the 25th.
+           Stamping the round's OWN date ends the ambiguity outright — it reads
+           correctly whether or not the round happened today, so no gating and
+           no conditional wording is needed. Format matches the page dateline
+           ("Jul 25 2026"); the colon form matches "Trends: Last 20 Rounds" and
+           "Scores: Last 10 Rounds".
+           NOTE this comment sits inside a JS template literal — no backticks
+           and no dollar-brace in here, or the string terminates. (It did.)
+           The todaysStats / todaysVisible identifiers keep their names; only
+           display text changed. Renaming them is a separate, wider edit. -->
+      <h2 class="report-heading">Last Round: ${roundDateLabel(t.date)}</h2>
       <div class="today-round">
         <div class="today-grid">
           ${tile(t.fir.count, 'FIR')}
@@ -2058,7 +2144,19 @@ function todaysStatsHTML(t, roundsToDate) {
           ${tile(t.pen.count, 'PEN')}
           ${tile(t.ud.count, 'UD')}
           ${tile(t.putts, 'PUTTS')}
-          ${tile(roundsToDate, 'RTD')}
+          ${
+      // Sixth tile swaps RTD -> HI once a Handicap Index exists (Paul,
+      // 2026-07-26). WHS Rule 5.2a establishes no Index below 3 scores, so
+      // until then the slot carries Rounds to Date — a number that means
+      // something from round one — and hands over the moment HI becomes real.
+      //
+      // Both conditions are required: the round count AND a non-null handicap.
+      // handicap is null when no round has been played from a tee with a
+      // Course Rating/Slope on file, which can happen at any round count.
+      roundsCount >= 3 && handicap !== null
+        ? tile(handicap.toFixed(1), 'HI')
+        : tile(roundsToDate, 'RTD')
+    }
         </div>
         <div class="today-hero">
           <div class="today-hero-score">${t.totalScore}</div>
@@ -2071,6 +2169,123 @@ function todaysStatsHTML(t, roundsToDate) {
         { label: 'Bogey', pct: t.bogey.pct },
         { label: 'Bogey+', pct: t.bogeyPlus.pct }
       ])}
+    </div>`;
+}
+
+// Score by Day of Week — average round total per weekday, last 20 rounds.
+//
+// Two things this does differently from the other bar rows, both deliberate:
+//
+// 1. THE AXIS IS TRUNCATED. Golf scores cluster in a narrow band (Paul's test
+//    data spans 75.7 to 88.8), and scaling those from zero makes seven bars of
+//    near-identical height — the same flattening the Last 10 Rounds chart has.
+//    Here the scale runs from just below the best day to just above the worst,
+//    so a 13-stroke spread actually reads as one. Every bar is labelled with
+//    its real average, which is what keeps a truncated axis honest.
+//
+// 2. A DAY WITH NO ROUNDS IS NOT A ZERO. It draws as an empty rule with a dash,
+//    never a bar. Paul's own 20 rounds contain no Tuesday, and a 0.0 bar would
+//    say he shot zero rather than that he doesn't play Tuesdays.
+// BUILT-BUT-NOT-RENDERED from 2026-07-27 (Paul): "this is a custom Stat".
+// Unlike FIR/GIR/scrambling/handicap there's no governing-body definition
+// behind Score by Day, and the sample maths didn't support it either — see the
+// note in renderAnalytics' `trends` chain. Kept whole, with stats.js's
+// scoreByDay, in case it earns its place back at a few hundred rounds.
+//
+// windowLabelTitle is passed in so the caption can name its window without
+// hardcoding "20" — renderAnalytics owns the real round count. Defaults to the
+// 20-round wording since this section only rendered once 20 rounds existed.
+function scoreByDayHTML(days, windowLabelTitle = 'Last 20 Rounds') {
+  const played = days.filter((d) => d.avg !== null).map((d) => d.avg);
+  if (!played.length) return '';
+  const lo = Math.min(...played);
+  const hi = Math.max(...played);
+  const span = Math.max(1, hi - lo);
+  // Headroom either side so the best day isn't a sliver and the worst isn't
+  // pinned to the ceiling.
+  const floor = lo - span * 0.35;
+  const ceil = hi + span * 0.1;
+
+  return `
+    <div class="report-section">
+      <h2 class="report-heading">Score by Day of Week</h2>
+      <div class="bar-row thick fit">
+        ${days.map((d) => {
+          if (d.avg === null) {
+            return `
+        <div class="bar-col">
+          <div class="bar-value dim">&mdash;</div>
+          <div class="bar bar-empty" style="height:3px;"></div>
+          <div class="bar-label">${d.label}</div>
+        </div>`;
+          }
+          const h = Math.max(8, Math.round(((d.avg - floor) / (ceil - floor)) * 110));
+          return `
+        <div class="bar-col">
+          <div class="bar-value">${d.avg.toFixed(1)}</div>
+          <div class="bar" style="height:${h}px;"></div>
+          <div class="bar-label">${d.label}</div>
+        </div>`;
+        }).join('')}
+      </div>
+      <!-- Caption set by Paul 2026-07-27, replacing "Days with no rounds on
+           record show a dash." It now states what the values ARE (average gross
+           18-hole strokes) and their window, matching Hole Ratings' wording —
+           the old caption said neither. The dash itself is no longer explained;
+           an empty rule where a bar would be is read as absence, and the
+           alternative was a two-sentence note under a seven-bar chart.
+           The avg: null → dash path in stats.js is unchanged. -->
+      <p class="report-note">Average 18 hole score, ${windowLabelTitle.toLowerCase()}.</p>
+    </div>`;
+}
+
+// Trends: Last 20 Rounds (Paul, 2026-07-26). Sits at the very bottom of
+// Analytics, below Membership ROI — the deepest read on the page.
+//
+// This is Season Stats and Score Distribution returning, both of which were
+// deleted on 2026-07-25, but the two objections that killed them are answered:
+//   - They now GATE on a full 20 rounds, so the heading never describes three.
+//   - Score Distribution counts ROUND TOTALS across scoring bands, not
+//     birdie/par/bogey buckets. Today's Round already charts those per hole;
+//     this answers a different question — how often do I break 80 — so the two
+//     charts no longer say the same thing twice.
+function trendsHTML(a) {
+  const t = (value, label) =>
+    `<div class="trend-tile"><div class="trend-value">${value}</div>` +
+    `<div class="trend-label">${label}</div></div>`;
+  const n = (v, dp) => (v === null || v === undefined ? '—' : Number(v).toFixed(dp));
+  const p = (v) => (v === null || v === undefined ? '—' : v + '%');
+  const se = a.season;
+  return `
+    <div class="report-section">
+      <!-- Footnote form (Paul, 2026-07-27): the asterisk on the heading carries
+           the window, the caption just qualifies it. Replaces "All stats are
+           based on the last 20 rounds, unless otherwise noted." — which
+           restated the heading before getting to its one piece of new
+           information. The asterisk is doing real work: this note governs the
+           whole page below it, not just this section, and the sections that
+           break the rule say so in their own captions (Putting: "All rounds").
+           Keep the two marks paired if either is reworded. -->
+      <h2 class="report-heading">Trends: Last 20 Rounds*</h2>
+      <p class="report-note trend-note">*Unless otherwise noted.</p>
+      <!-- Mirrors the rocker console order from the hole screen — FIR, GIR,
+           PEN, PUTTS — with HI in the last slot (Today's Round carries RTD
+           there, a running count that would read identically here).
+           The UD slot holds SCRAMBLING, which is the same event as Today's
+           Round's UD count — par saved on a missed green — expressed as a rate
+           over 20 rounds instead of a count over one. Neither reads the ud
+           rocker; both derive from gir + score, so the figure survives a player
+           who forgets to tap, or taps the wrong thing. -->
+      <div class="trend-grid">
+        ${t(p(se.fir.pct), 'FIR')}
+        ${t(p(se.gir.pct), 'GIR')}
+        ${t(p(a.twentyRoundAvg.pen.pct), 'PEN')}
+        ${t(p(a.scrambling20.pct), 'UD')}
+        ${t(n(se.puttsPerRound, 1), 'Putts')}
+        ${t(a.handicap === null ? '—' : a.handicap.toFixed(1), 'HI')}
+      </div>
+      <h2 class="report-heading trend-subheading">Score Distribution</h2>
+      ${barRowHTML(a.scoreBands.map((b) => ({ label: b.label, pct: b.pct })))}
     </div>`;
 }
 
@@ -2092,9 +2307,16 @@ function lastTenHTML(lastTen) {
       </div>`).join('');
   return `
     <div class="report-section">
-      <h2 class="report-heading">Last 10 Rounds</h2>
+      <!-- "Scores: Last 10 Rounds" (Paul, 2026-07-27) — the subject:window form
+           already used by "Birdies: Weekly Report" and "Trends: Last 20
+           Rounds". Naming the subject matters here because the bars are gross
+           18-hole strokes, and the page carries several other per-round numbers
+           (differentials, net) it could otherwise be mistaken for.
+           Caption drops the window, which the heading now states, and keeps
+           only the reading direction. -->
+      <h2 class="report-heading">Scores: Last 10 Rounds</h2>
       <div class="bar-row thick fit">${bars}</div>
-      <p class="report-note">Last 10 rounds, most recent on the right.</p>
+      <p class="report-note">Most recent on the right.</p>
     </div>`;
 }
 
@@ -2185,8 +2407,8 @@ function reportsEmptyHTML() {
       <p class="section-empty">Play your first round to calculate your Handicap Index.</p>
     </div>
     <div class="report-section">
-      <h2 class="report-heading">Hole Ratings</h2>
-      <p class="section-empty">Play a round to see hole-by-hole ratings.</p>
+      <h2 class="report-heading">Strokes per Hole</h2>
+      <p class="section-empty">Play a round to see your hole-by-hole average.</p>
     </div>
     <div class="report-section">
       <h2 class="report-heading">Scrambling &amp; Putting</h2>
@@ -2222,58 +2444,166 @@ function reportsFullHTML(a) {
   // differential − 2.0), so the number doesn't lurch when it becomes official.
   const hs = a.handicapStatus || { status: null };
   const isEstimate = hs.status === 'estimate';
+  // Redesigned 2026-07-26 to Paul's pasted comp: the chart leads, the number
+  // follows as a stated line rather than a hero numeral. The count is NOT
+  // hard-coded to 8 — WHS Rule 5.2a counts fewer differentials below 20 rounds
+  // (lowest 3 at 9-11, and so on), so the heading reads off what was actually
+  // used. It says "Best 8 of Last 20" only when it really is 8 of 20.
+  const nDiff = a.best8Differentials.length;
   const handicapSection = `
     <div class="report-section">
-      <h2 class="report-heading">${isEstimate ? 'Estimated Handicap' : 'Handicap Index'}</h2>
-      <div class="handicap-readout">${a.handicap !== null ? a.handicap.toFixed(1) : '—'}</div>
-      ${isEstimate
-        ? `<div class="report-sub" style="margin-bottom:8px;">Estimate — ${hs.roundsToEstablish} more round${hs.roundsToEstablish === 1 ? '' : 's'} to establish a Handicap Index</div>`
-        : ''}
-      <div class="report-sub" style="margin-bottom:8px;">${
-        // Not always 8: with fewer than 20 rounds on record, WHS Rule 5.2a
-        // counts fewer differentials (e.g. lowest 3 at 9-11 rounds), so the
-        // label reads off what was actually used rather than hard-coding "8".
-        a.best8Differentials.length
-          ? `Lowest ${a.best8Differentials.length} Score Differential${a.best8Differentials.length === 1 ? '' : 's'} of the ${windowLabelTitle}`
-          : 'Score Differentials'
-      }</div>
-      ${a.best8Differentials.length
+      <h2 class="report-heading">${nDiff ? `Best ${nDiff} of ${windowLabelTitle}` : 'Score Differentials'}</h2>
+      ${nDiff
         ? diffBarRowHTML(a.best8Differentials)
         : (a.handicap === null
             ? '<p class="section-empty">A Handicap Index needs at least 3 rounds (WHS Rule 5.2a).</p>'
             : '<p class="section-empty">No rounds on a recognized tee yet — Score Differential needs Course Rating/Slope from your tee.</p>')}
+      ${nDiff ? '<p class="report-note">Follows the World Handicap System.</p>' : ''}
+      ${a.handicap !== null
+        ? `<p class="handicap-line">${isEstimate ? 'Your estimated handicap is' : 'Your Handicap Index is'}: ${a.handicap.toFixed(1)}</p>`
+        : ''}
+      ${isEstimate
+        ? `<p class="report-note">${hs.roundsToEstablish} more round${hs.roundsToEstablish === 1 ? '' : 's'} to establish a Handicap Index.</p>`
+        : ''}
     </div>`;
 
+  // Monthly Scoring Trend (Paul's comp, 2026-07-26). Range-scaled like Score by
+  // Day — month averages sit in a narrow band and zero-scaling flattens them.
+  //
+  // BUILT-BUT-NOT-RENDERED from 2026-07-27 (Paul), and off the page for the
+  // same reason as Score by Day: a custom stat, on a sample that can't carry
+  // it. Twenty rounds split by calendar month gave three bars spanning 83.0 /
+  // 82.9 / 81.5 — a 1.5-stroke range, well inside the noise of any single
+  // round, drawn range-scaled so that gap filled the chart. It also answered
+  // roughly what Last 10 Rounds answers, one zoom level out.
+  // Restoring it is one line in the `trends` chain; stats.js's monthlyScoring
+  // is untouched.
+  const monthlyTrend = a.monthlyScoring.length
+    ? `
+    <div class="report-section">
+      <h2 class="report-heading">Monthly Scoring Trend</h2>
+      ${valueBarRowHTML(a.monthlyScoring.map((m) => ({ label: m.label, value: m.avg })), 1)}
+      <p class="report-note">Average 18 hole score by month, ${windowLabel.toLowerCase()}.</p>
+    </div>`
+    : '';
+
+  // No UD row here (Paul, 2026-07-27). UD/Scrambling is ONE number and it was
+  // printing in three places at once — this table, the Trends grid, and the
+  // Putting card — all reading 12%, with nothing on screen to say they were the
+  // same stat rather than three that happened to agree. The Trends tile won the
+  // slot, since that grid is where UD reads as a peer of FIR/GIR/PEN. Do not
+  // add it back here without taking it out of Trends.
   const twentyRoundAvg = `
     <div class="report-section">
       <h2 class="report-heading">${windowN} Round Average</h2>
-      <table class="stat-table">
+      <table class="stat-table stat-table-headed">
+        <tr><th>Stat</th><th>Avg</th></tr>
         <tr><td>FIR</td><td>${a.twentyRoundAvg.fir.pct}%</td></tr>
         <tr><td>GIR</td><td>${a.twentyRoundAvg.gir.pct}%</td></tr>
         <tr><td>PEN</td><td>${a.twentyRoundAvg.pen.pct}%</td></tr>
+        <tr><td>Putts</td><td>${a.season.puttsPerRound === null ? '—' : a.season.puttsPerRound.toFixed(1)}</td></tr>
       </table>
     </div>`;
 
+  // "Strokes per Hole", not "Hole Ratings" (Paul, 2026-07-27). The old heading
+  // borrowed WHS vocabulary — Course Rating and Slope Rating are real, defined
+  // things this app computes elsewhere, and a "Hole Rating" is not one of them.
+  // The new heading says exactly what the bars are. The const and stats.js's
+  // `holeRatings` keep their names; only the heading changed.
   const holeRatings = `
     <div class="report-section">
-      <h2 class="report-heading">Hole Ratings <span class="report-sub">Avg strokes vs par, ${windowLabel.toLowerCase()}</span></h2>
+      <h2 class="report-heading">Strokes per Hole</h2>
       ${holeRatingBarsHTML(a.holeRatings)}
+      <p class="report-note">Average, ${windowLabel.toLowerCase()}.</p>
     </div>`;
 
-  const scramblingPutting = `
+  // Stats Breakdown — the same four buckets Today's Round charts, but across
+  // the last 20 rounds instead of one. Renamed from "Scoring Breakdown"
+  // 2026-07-27 (Paul); the const keeps its old name, only the heading changed.
+  // Deliberately NOT the duplication that
+  // got the old 20-round Score Distribution deleted on 2026-07-25: that one
+  // rendered from round one with no window stated, so it sat beside Today's
+  // Round saying the same thing. This is explicitly the 20-round trend, and
+  // Trends' own Score Distribution charts round TOTALS in bands, not holes.
+  const scoringBreakdown = `
     <div class="report-section">
-      <h2 class="report-heading">Scrambling &amp; Putting <span class="report-sub">All-time</span></h2>
-      <table class="stat-table">
-        <tr><td>Scrambling %</td><td>${a.scrambling.pct}%</td></tr>
-        <tr><td>Putts per GIR</td><td>${fmtNum(a.puttsSplit.gir)}</td></tr>
-        <tr><td>Putts per Missed GIR</td><td>${fmtNum(a.puttsSplit.nonGir)}</td></tr>
-        <tr><td>Up-and-Down %</td><td>${a.udOnMissedGir.pct}%</td></tr>
-        <tr><td>Penalty Impact</td><td>${a.penaltyImpact.withPen === null ? 'No PEN logged yet' : fmtSigned(a.penaltyImpact.withPen)}</td></tr>
-        <tr><td>No-Penalty Avg</td><td>${fmtSigned(a.penaltyImpact.withoutPen)}</td></tr>
-        <tr><td>1-Putt %</td><td>${a.puttDistribution.onePutt.pct}%</td></tr>
-        <tr><td>2-Putt %</td><td>${a.puttDistribution.twoPutt.pct}%</td></tr>
-        <tr><td>3-Putt+ %</td><td>${a.puttDistribution.threePuttPlus.pct}%</td></tr>
-      </table>
+      <h2 class="report-heading">Stats Breakdown</h2>
+      ${barRowHTML([
+        { label: 'Birdie', pct: a.scoreDistribution.birdie.pct },
+        { label: 'Par', pct: a.scoreDistribution.par.pct },
+        { label: 'Bogey', pct: a.scoreDistribution.bogey.pct },
+        { label: 'Bogey+', pct: a.scoreDistribution.bogeyPlus.pct }
+      ])}
+      <!-- Caption cut to the bare window label (Paul, 2026-07-27). Uses
+           windowLabelTitle, not a literal "Last 20 Rounds", so it still tells
+           the truth if this ever renders below a full 20. The bars are
+           percentages and read as shares without being told. -->
+      <p class="report-note">${windowLabelTitle}</p>
+    </div>`;
+
+  // 1 Putts — one bar per round, oldest left, matching Last 10 Rounds'
+  // ordering. Counts, not percentages, so it scales from zero: a round with no
+  // one-putts genuinely is zero here, unlike a scoring average.
+  //
+  // Was "1 Putt Par Saves" until 2026-07-27 (Paul). It claimed to be a par-save
+  // stat while filtering on `score <= par`, so it counted birdies from off the
+  // green and ran higher than the real par-save count. Correcting it would have
+  // made it Scrambling drawn a second time; counting every one-putt instead
+  // makes it a putting stat that duplicates nothing. See stats.js `onePutts`.
+  //
+  // BUILT-BUT-NOT-RENDERED from 2026-07-27 (Paul) — pulled off the page along
+  // with Penalty Impact. Correct and computed; restoring it is one line in the
+  // `trends` chain below. `stats.js`'s `onePutts` is untouched.
+  const onePutts = `
+    <div class="report-section">
+      <h2 class="report-heading">1 Putts</h2>
+      ${countBarRowHTML(a.onePutts.map((r) => r.count))}
+      <p class="report-note">One-putt greens per round, last ${a.onePutts.length} round${a.onePutts.length === 1 ? '' : 's'}.</p>
+    </div>`;
+
+  // Penalty Impact — its own section from 2026-07-26 (Paul's comp). It lived in
+  // the Scrambling & Putting table only for want of a home; it is a
+  // course-management stat, not a short-game one.
+  //
+  // BUILT-BUT-NOT-RENDERED from 2026-07-27 (Paul). Note the page still carries
+  // PEN as a rate (Today's Round count, Trends tile, 20 Round Average row) —
+  // what's gone is the strokes-lost comparison, not penalties as a stat.
+  // Restoring it is one line in the `trends` chain below; `stats.js`'s
+  // `penaltyImpact` is untouched.
+  const penaltySection = `
+    <div class="report-section">
+      <h2 class="report-heading">Penalty Impact</h2>
+      ${valueBarRowHTML([
+        { label: 'Holes w/ PEN', value: a.penaltyImpact.withPen },
+        { label: 'Holes w/o PEN', value: a.penaltyImpact.withoutPen }
+      ], 1, true)}
+      <p class="report-note">Average strokes over par on holes with a penalty, against holes without.</p>
+    </div>`;
+
+  // Putting — the charted replacement for the old Scrambling & Putting table
+  // (Paul's comp, 2026-07-26). Two stats from that table are NOT carried over:
+  // Penalty Impact and No-Penalty Avg, which were never short-game stats and
+  // only lived there for want of a home; and Up-and-Down %, which sat next to
+  // Scrambling % looking like the same number computed wrong (34% vs 13% —
+  // ud flag vs par-or-better). Scrambling survives, stated with its definition.
+  const putting = `
+    <div class="report-section">
+      <h2 class="report-heading">Putting</h2>
+      ${barRowHTML([
+        { label: '1 Putt', pct: a.puttDistribution.onePutt.pct },
+        { label: '2 Putts', pct: a.puttDistribution.twoPutt.pct },
+        { label: '3+ Putts', pct: a.puttDistribution.threePuttPlus.pct }
+      ])}
+      <!-- The Scrambling line that sat here was dropped 2026-07-27 (Paul). It
+           was the third printing of the UD figure on one page; the UD tile in
+           the Trends grid is now the single home for it. What's left here is
+           putting only — and since the 1 Putts chart came off the page on
+           2026-07-27, these three bars are the whole of putting on Analytics. -->
+      <!-- "All rounds", stated explicitly: puttDistribution is computed off
+           allHoleRecords, but the Trends heading above declares the page is
+           last-20 "unless otherwise noted" — so this is the noting. Window it
+           to 20 and this caption goes back to the default. -->
+      <p class="report-note">Share of greens by putts taken. All rounds.</p>
     </div>`;
 
   const weeklyTrends = a.weeklyVisible
@@ -2284,7 +2614,9 @@ function reportsFullHTML(a) {
       <p class="section-empty">Play one more round (2 total) to unlock weekly trends.</p>
     </div>`).join('');
 
-  const todaysStats = a.todaysVisible && a.todaysStats ? todaysStatsHTML(a.todaysStats, a.roundsToDate) : '';
+  const todaysStats = a.todaysVisible && a.todaysStats
+    ? todaysStatsHTML(a.todaysStats, a.roundsToDate, a.handicap, a.roundsCount)
+    : '';
 
   const membershipRoi = a.roi
     ? membershipROIHTML(a.roi, a.offSeason)
@@ -2294,17 +2626,67 @@ function reportsFullHTML(a) {
       <p class="section-empty">Set up your membership fee and green fee in Settings to see savings.</p>
     </div>`;
 
-  // Handicap Index, 20 Round Average, Hole Ratings and Scrambling & Putting are
-  // BUILT ABOVE BUT NOT RENDERED (2026-07-25, Paul). They are all 20-round
-  // stats and belong further down the page than the weekly charts, which are
-  // the "tweener" content for the ~7 weeks before 20 rounds exist. Their exact
-  // position and presentation are still being designed.
-  //
-  // Kept assembled rather than deleted so restoring one is a matter of dropping
-  // it back into this return in the right order — nothing needs rebuilding.
   const lastTenSection = a.lastTenVisible && a.lastTen.length ? lastTenHTML(a.lastTen) : '';
 
-  return todaysStats + weeklyTrends + lastTenSection + membershipRoi;
+  // Handicap Index, 20 Round Average, Hole Ratings and Scrambling & Putting sat
+  // BUILT-BUT-NOT-RENDERED from 2026-07-25 while their placement was decided.
+  // Rendered from 2026-07-26 (Paul), in the position the old note argued for:
+  // below the weekly charts, which are the "tweener" content for the ~7 weeks
+  // before 20 rounds of history exist.
+  //
+  // Ordering runs shallow to deep — the single Handicap Index number first,
+  // then the three-figure 20 Round Average, then the per-hole chart, then the
+  // detail table. Last 10 Rounds stays last of the charts because it's the
+  // narrowest window, and Membership ROI stays at the very bottom since it's
+  // money rather than golf.
+  //
+  // NOTE these four do not gate on round count. buildAnalytics computes them
+  // from lastN(sorted, 20), so at three rounds they are a three-round average
+  // wearing a "20 Round" label. That's the presentation question Paul still has
+  // open — Season Stats and the 20-round Score Distribution were deleted on
+  // 2026-07-25 for exactly this reason. See windowLabel/windowLabelTitle above,
+  // which already read off the real count and are what these should use.
+  // Everything below Last 10 Rounds that reads a 20-round window is gated on
+  // a full 20 (Paul, 2026-07-26: "are there 20 rounds yet, yes-then render,
+  // no-stay hidden"). Below that the windows aren't full and the headings would
+  // be describing three rounds — exactly what got Season Stats deleted on
+  // 2026-07-25. Nothing is shown in their place: placeholders for a dozen
+  // locked sections would be more noise than the sections are worth.
+  // Bottom run, in the order Paul is pasting the comps: Trends, then Best N of
+  // Last 20, then Score by Day. Handicap moved down here from the deep block so
+  // the best-8 chart isn't drawn twice on one page.
+  // The pasted comps run contiguously and in the order Paul supplied them.
+  const trendsSection = a.twentyRoundStatsVisible ? trendsHTML(a) : '';
+  const bestEightSection = a.twentyRoundStatsVisible ? handicapSection : '';
+  const holeRatingsSection = a.twentyRoundStatsVisible ? holeRatings : '';
+  const trends = a.twentyRoundStatsVisible
+    ? scoringBreakdown
+      + putting
+      // FOUR sections came out of this chain on 2026-07-27 (Paul), in order:
+      // 1 Putts, Penalty Impact, Score by Day of Week, Monthly Scoring Trend.
+      // The last two share a reason — custom stats with no governing definition
+      // behind them, drawn on a sample too thin to say what the chart implied.
+      // Score by Day split 20 rounds seven ways (2-5 per bar; Thursday's four
+      // alone spanned 67 to 91, wider inside one day than between any two).
+      // Monthly split them three ways for a 1.5-stroke spread, range-scaled so
+      // it filled the frame.
+      // Every builder survives above and stats.js still computes onePutts /
+      // penaltyImpact / scoreByDay / monthlyScoring. Restoring any is one line
+      // here, in position.
+      + twentyRoundAvg
+    : '';
+
+  // Best 8 sits directly under Last 10 Rounds (Paul, 2026-07-26) — the two
+  // recent-form charts read together, and the Handicap Index line travels with
+  // it rather than being stranded further down the page.
+  return todaysStats
+    + weeklyTrends
+    + lastTenSection
+    + trendsSection
+    + bestEightSection
+    + holeRatingsSection
+    + membershipRoi
+    + trends;
 }
 
 // ===================== Event wiring =====================
@@ -2458,6 +2840,13 @@ function attachHandlers() {
         const el = document.getElementById('rocker-' + key);
         if (el) el.addEventListener('click', () => {
           d[key] = !d[key];
+          // GIR and UD are mutually exclusive (Paul, 2026-07-26): "physically
+          // impossible to have both a gir and a ud". Hitting the green in
+          // regulation means there was no par to save. Enforced at ENTRY so the
+          // combination can never be written to a round in the first place —
+          // cheaper than teaching every reader to distrust the pair.
+          if (key === 'gir' && d.gir) d.ud = false;
+          if (key === 'ud' && d.ud) d.gir = false;
           render();
         });
       });

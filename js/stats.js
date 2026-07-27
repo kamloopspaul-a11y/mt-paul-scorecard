@@ -483,6 +483,32 @@ export function isWeeklyChartsVisible(roundsHistory) {
   return (roundsHistory || []).length >= 2;
 }
 
+// Everything on the deep end of Analytics — Handicap Index, 20 Round Average,
+// Hole Ratings, Scrambling & Putting, Trends — waits for a full 20 rounds
+// (Paul, 2026-07-26: "are there 20 rounds yet, yes-then render, no-stay
+// hidden"). Below that the windows aren't full and a "20 round" heading would
+// be describing three rounds. This is why Season Stats and the 20-round Score
+// Distribution were deleted on 2026-07-25 — they rendered from round one.
+export function isTwentyRoundStatsVisible(roundsHistory) {
+  return (roundsHistory || []).length >= 20;
+}
+
+// Score bands for the Trends distribution — how many of the last 20 ROUNDS
+// finished in each scoring range (distinct from Today's Round's birdie/par/
+// bogey buckets, which count HOLES within one round; that duplication is what
+// got the old 20-round Score Distribution deleted).
+//
+// Thresholds are fixed, and suit a player scoring in the 70s and 80s. A higher
+// handicap piles every round into 85+ and the chart says nothing — if this ever
+// ships beyond Paul and Dave, these want deriving from the player's own spread
+// rather than hard-coded.
+export const SCORE_BANDS = [
+  { label: '<75',   test: (t) => t < 75 },
+  { label: '75-79', test: (t) => t >= 75 && t <= 79 },
+  { label: '80-84', test: (t) => t >= 80 && t <= 84 },
+  { label: '85+',   test: (t) => t >= 85 }
+];
+
 // ===================== Weekly Reveal — new-bar animation (Pass 4) =====================
 //
 // Design Handoff/Design-Screens/18-23 ("Weekly Reveal") turned out to be a
@@ -884,7 +910,18 @@ export function buildAnalytics(roundsHistory, settings, handicapData) {
 
   // --- Season Stats hero tiles (last 20 rounds, except Best/Worst = all-time) ---
   const scoringAvg = avgRounds(last20Rounds, roundTotalScore);
+  // Best and worst are ALL-TIME, not last-20 — a personal best is a career
+  // figure, not a rolling-window one.
   const bestRound = hasAnyRounds ? Math.min(...sorted.map(roundTotalScore)) : null;
+  //
+  // worstRound IS DELIBERATELY NOT DISPLAYED ANYWHERE (Paul, 2026-07-26):
+  // "People will remember their best round for the longest time. And want to
+  // forget their worst round as quickly as possible. So we won't be posting
+  // that." It briefly appeared in the Trends grid and was taken out.
+  //
+  // Kept computed rather than deleted so this note survives with it — the value
+  // is one line and free, and anyone tempted to add a "worst round" tile should
+  // read the reason before doing it. Do not surface this in the UI.
   const worstRound = hasAnyRounds ? Math.max(...sorted.map(roundTotalScore)) : null;
   const puttsPerRound = avgRounds(last20Rounds, roundPutts);
   // FIR denominator = fairways AVAILABLE, not holes played (2026-07-25).
@@ -915,6 +952,86 @@ export function buildAnalytics(roundsHistory, settings, handicapData) {
     bogey: aggregateHoles(last20HoleRecords, () => true, countAndPct(SCORE_BUCKET_PREDICATES.bogey)),
     bogeyPlus: aggregateHoles(last20HoleRecords, () => true, countAndPct(SCORE_BUCKET_PREDICATES.bogeyPlus))
   };
+
+  // --- Trends: how the last 20 ROUND TOTALS spread across scoring bands ---
+  const bandTotals = last20Rounds.map(roundTotalScore);
+  const scoreBands = SCORE_BANDS.map((b) => {
+    const count = bandTotals.filter(b.test).length;
+    return {
+      label: b.label,
+      count,
+      pct: bandTotals.length ? Math.round((count / bandTotals.length) * 100) : 0
+    };
+  });
+
+  // --- Monthly scoring trend (last 20 rounds) ---
+  //
+  // Grouped by LOCAL calendar month, chronological, only months that actually
+  // contain rounds. No zero-filling of empty months: a gap month would draw as
+  // a zero-score bar, and in a 20-round window an empty month usually just
+  // means the window doesn't reach that far back.
+  const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const monthKeys = [];
+  const monthBuckets = {};
+  last20Rounds.forEach((r) => {
+    const d = new Date(r.date);
+    if (isNaN(d)) return;
+    const key = d.getFullYear() + '-' + String(d.getMonth()).padStart(2, '0');
+    if (!monthBuckets[key]) { monthBuckets[key] = { label: MONTH_ABBR[d.getMonth()], totals: [] }; monthKeys.push(key); }
+    monthBuckets[key].totals.push(roundTotalScore(r));
+  });
+  const monthlyScoring = monthKeys.sort().map((k) => ({
+    label: monthBuckets[k].label,
+    count: monthBuckets[k].totals.length,
+    avg: monthBuckets[k].totals.reduce((a2, b) => a2 + b, 0) / monthBuckets[k].totals.length
+  }));
+
+  // --- One-putt greens, per round, last 10 ---
+  //
+  // Was "1 Putt Par Saves" (!gir && putts === 1 && score <= par) until
+  // 2026-07-27. That formula was wrong twice over. Under Paul's definition a
+  // par save is EXACTLY par and method-agnostic — a chip-in counts the same as
+  // a one-putt — so singling out the putted subset contradicted UD/Scrambling;
+  // and `score <= par` let birdies from off the green in, so the chart ran
+  // HIGHER than the true par-save count, not lower (5 vs 4 and 1 vs 0 in the
+  // last ten of the test fixture). Fixing it to `=== par` would have made it a
+  // per-round redraw of Scrambling — a fourth rendering of one number.
+  //
+  // So it is now simply the count of one-putt greens: a putting skill in its
+  // own right, overlapping nothing else on the page. The Putting card states
+  // 1-putt as an all-time rate; this is the same event as a per-round trend.
+  // No !gir test and no score test — a one-putt is a one-putt.
+  const lastTenRounds = lastN(sorted, 10);
+  const onePutts = lastTenRounds.map((r) => ({
+    date: r.date,
+    count: (r.holes || []).filter((h) => h.putts === 1).length
+  }));
+
+  // --- Score by day of week (last 20 rounds) ---
+  //
+  // Local day, not UTC: getDay() reads the device's timezone, so a round saved
+  // at 9am in Kamloops is a Kamloops day. Parsing as UTC would push early or
+  // late rounds onto the wrong day.
+  //
+  // Days with NO rounds carry avg: null, NOT zero. Nobody shoots 0, so a zero
+  // bar would read as a catastrophic round rather than an absence. The renderer
+  // draws those as an empty rule — see scoreByDayHTML in app.js. Paul's own
+  // test data has no Tuesday rounds, which is exactly the case this guards.
+  const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const byDayBuckets = DAY_LABELS.map(() => []);
+  last20Rounds.forEach((r) => {
+    const d = new Date(r.date);
+    if (isNaN(d)) return;
+    byDayBuckets[d.getDay()].push(roundTotalScore(r));
+  });
+  const scoreByDay = DAY_LABELS.map((label, i) => {
+    const v = byDayBuckets[i];
+    return {
+      label,
+      count: v.length,
+      avg: v.length ? v.reduce((a2, b) => a2 + b, 0) / v.length : null
+    };
+  });
 
   // --- Best 8 of Last 20 / Handicap Index ---
   const best8Differentials = best8Of20Differentials(rounds, handicapData);
@@ -957,6 +1074,13 @@ export function buildAnalytics(roundsHistory, settings, handicapData) {
         holeNum: n,
         par: parFor(n),
         plays: last20HoleRecords.filter((h) => key(h) === n).length,
+        // Average ACTUAL strokes — what the player really writes down (Paul,
+        // 2026-07-26: "I want full strokes, not abbreviated over under par
+        // junk... I want to know how many strokes do I usually play it in").
+        avgStrokes: aggregateHoles(last20HoleRecords, (h) => key(h) === n, avg((h) => h.score)),
+        // Kept alongside: same data expressed against par. Nothing renders it
+        // today, but every other stat on the page is a differential and this is
+        // the bridge back to them.
         avgOverPar: aggregateHoles(last20HoleRecords, (h) => key(h) === n, avg((h) => h.score - h.par))
       });
     }
@@ -964,7 +1088,29 @@ export function buildAnalytics(roundsHistory, settings, handicapData) {
   })();
 
   // --- Scrambling / Putts split / Penalty impact / Putt distribution (all-time) ---
-  const scrambling = aggregateHoles(allHoleRecords, (h) => !h.gir, countAndPct((h) => h.score <= h.par));
+  // Scrambling = a PAR SAVE on a missed green. EXACTLY par, not par-or-better
+  // (Paul, 2026-07-26): "Technically to 'Scramble' is to fight for Par. You
+  // don't scramble to make less than par, that's good golfing that put you into
+  // a scoring position to make Birdy or better, or simply a stroke of luck."
+  //
+  // Was `score <= par`, which folded birdies-from-off-the-green into the same
+  // number. Note this DIVERGES from the PGA Tour definition, which is par or
+  // better — so this figure is not comparable with a tour or third-party
+  // scrambling percentage. That's deliberate; it answers Paul's question, not
+  // the tour's.
+  //
+  // Derived from gir + score, never from the ud flag: this needs no discipline
+  // from the player at entry time, where a flag does.
+  const scrambling = aggregateHoles(allHoleRecords, (h) => !h.gir, countAndPct((h) => h.score === h.par));
+  // Last-20 twin. As of 2026-07-27 the ONLY place this stat renders is the UD
+  // tile in the Trends: Last 20 grid, whose heading claims a 20-round window —
+  // so that tile must read scrambling20, not scrambling. The two were identical
+  // while the fixture held exactly 20 rounds, which is why the mismatch went
+  // unseen; at round 21 the all-time figure starts drifting under a heading
+  // that promises the last 20. `scrambling` (all-time) is kept for the day a
+  // section legitimately wants a career figure — use the one the surrounding
+  // heading actually claims.
+  const scrambling20 = aggregateHoles(last20HoleRecords, (h) => !h.gir, countAndPct((h) => h.score === h.par));
   const puttsSplit = {
     gir: aggregateHoles(allHoleRecords, (h) => h.gir, avg((h) => h.putts)),
     nonGir: aggregateHoles(allHoleRecords, (h) => !h.gir, avg((h) => h.putts))
@@ -981,6 +1127,19 @@ export function buildAnalytics(roundsHistory, settings, handicapData) {
   // Scrambling's UD (up-and-down) companion stat, e.g. for a "1-putt par saves"
   // style readout: UD rate among non-GIR holes.
   const udOnMissedGir = aggregateHoles(allHoleRecords.filter((h) => !h.gir), () => true, countAndPct((h) => h.ud));
+  // NOTHING RENDERS EITHER OF THESE as of 2026-07-26 (Paul: "Drop the UD tile,
+  // keep Scrambling only"). The ud flag is player-tapped, and on real cards it
+  // gets missed or misapplied — Scrambling replaced it everywhere, derived from
+  // gir + score so it needs no discipline at entry time. Kept computed, and one
+  // line each, so this reasoning survives next to the data. Do not resurrect a
+  // UD percentage without re-reading it.
+  //
+  // Last-20 twin of the above. The all-time figure is the right one beside
+  // Scrambling (also all-time); it is the WRONG one under a heading that says
+  // "20 Round Average" or inside the Trends grid, which is what it was doing
+  // until 2026-07-26. Same stat, different window — keep both, use the one the
+  // surrounding heading claims.
+  const udOnMissedGir20 = aggregateHoles(last20HoleRecords.filter((h) => !h.gir), () => true, countAndPct((h) => h.ud));
 
   // --- Weekly charts (last 4 weeks), gated to >= 2 rounds ---
   const weeklyVisible = isWeeklyChartsVisible(rounds);
@@ -1025,7 +1184,16 @@ export function buildAnalytics(roundsHistory, settings, handicapData) {
       fir: aggregateHoles(recentHoles, (h) => h.par >= 4, countAndPct((h) => h.fir)),
       gir: aggregateHoles(recentHoles, () => true, countAndPct((h) => h.gir)),
       pen: aggregateHoles(recentHoles, () => true, countAndPct((h) => h.pen)),
-      ud: aggregateHoles(recentHoles, () => true, countAndPct((h) => h.ud)),
+      // UD = PAR SAVED (Paul, 2026-07-26). Derived from the round itself —
+      // missed the green, still made par — NOT from the ud rocker.
+      //
+      // "How the player saved Par isn't the factor, be it a One Putt, or a
+      // Chip In... the only thing that matters is missed GIR and made Par."
+      //
+      // So UD and Scrambling are the same event: this is the count for one
+      // round, Scrambling is the rate across many. The rocker stays as a note
+      // the player can keep however they like; no statistic reads it.
+      ud: aggregateHoles(recentHoles, (h) => !h.gir, countAndPct((h) => h.score === h.par)),
       // Today's Round hero (2026-07-25). Net = Actual Score − Course Handicap.
       //
       // Course Handicap, NOT Handicap Index: the Index is a portable rating of
@@ -1069,10 +1237,12 @@ export function buildAnalytics(roundsHistory, settings, handicapData) {
     twentyRoundAvg,
     holeRatings,
     scrambling,
+    scrambling20,
     puttsSplit,
     penaltyImpact,
     puttDistribution,
     udOnMissedGir,
+    udOnMissedGir20,
     weekly,
     weeklyVisible,
     weeklyNewSlotIndex,
@@ -1080,6 +1250,11 @@ export function buildAnalytics(roundsHistory, settings, handicapData) {
     todaysVisible,
     lastTen,
     lastTenVisible,
+    scoreBands,
+    scoreByDay,
+    onePutts,
+    monthlyScoring,
+    twentyRoundStatsVisible: isTwentyRoundStatsVisible(rounds),
     // Off-season entry table: the winter span around today, each month carrying
     // its live-round count and its tally, plus how the six months split across
     // the two membership seasons they always straddle.

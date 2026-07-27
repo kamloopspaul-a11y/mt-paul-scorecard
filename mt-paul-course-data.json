@@ -3,8 +3,9 @@
     "_comment": "Mt. Paul course reference data, duplicated from courses.json (Golf project) for use in A Bit of Bogey handicap calculations.",
     "_source": "uploads/courses-f024db74.json, course id 6",
     "_duplicated": "2026-07-22",
-    "_diverged_from_source": "location.elevation added 2026-07-25 \u2014 not present in the Golf project's courses.json. Re-pulling from that source would drop it.",
-    "_nine_hole_course": "Mt. Paul is a NINE-hole course. Both tees list 18 hole entries because the standard 18-hole round is two loops of the same nine \u2014 verified 2026-07-25: holes 1-9 and 10-18 are identical in par and yardage. Hole N and hole N+9 are the SAME PHYSICAL HOLE played twice. Stroke index is the exception and is correctly distinct across all 18 (front 5,13,11,3,17,1,15,7,9 / back 6,14,12,4,18,2,16,8,10) \u2014 that is normal for a nine played twice, so handicap strokes allocate one loop at a time. Consequence for Analytics: anything keyed on holeNum 1-18 is reporting each physical hole twice. Aggregate on ((holeNum - 1) % 9) + 1 for per-hole analysis; keep 1-18 only when the two loops are deliberately being compared (e.g. does the second nine score worse)."
+    "_diverged_from_source": "location.elevation added 2026-07-25 — not present in the Golf project's courses.json. Re-pulling from that source would drop it.",
+    "_nine_hole_course": "Mt. Paul is a NINE-hole course. Both tees list 18 hole entries because the standard 18-hole round is two loops of the same nine — verified 2026-07-25: holes 1-9 and 10-18 are identical in par and yardage. Hole N and hole N+9 are the SAME PHYSICAL HOLE played twice. Stroke index is the exception and is correctly distinct across all 18 (front 5,13,11,3,17,1,15,7,9 / back 6,14,12,4,18,2,16,8,10) — that is normal for a nine played twice, so handicap strokes allocate one loop at a time. Consequence for Analytics: anything keyed on holeNum 1-18 is reporting each physical hole twice. Aggregate on ((holeNum - 1) % 9) + 1 for per-hole analysis; keep 1-18 only when the two loops are deliberately being compared (e.g. does the second nine score worse).",
+    "_tees_comment": "Blue and Red are PHYSICAL tee boxes. Mt. Paul rates both for men and for ladies off the same boxes, so tees.male and tees.female carry identical par, yardage and index — only course_rating and slope_rating differ. Yardage is a property of the tee; rating is a property of the tee AND the player. Filled 2026-07-26; tees.female was an empty array before, which read as missing data when nothing was actually missing."
   },
   "id": 6,
   "club_name": "Mt. Paul",
@@ -15,7 +16,7 @@
     "state": "BC",
     "country": "Canada",
     "elevation": {
-      "_comment": "Elevation above sea level across the property, recorded 2026-07-25. A RANGE, not a point: the course falls roughly 70 ft from its high side to its low. Kept here rather than on the round record because it never varies between rounds \u2014 unlike tempC/windKmh, which are captured per round. Why it is recorded at all: thinner air at altitude increases carry, commonly reckoned at roughly 2% per 1,000 ft, so ~2% here. That is a constant offset for every round played at Mt. Paul, which means it explains nothing about variation BETWEEN rounds \u2014 it only matters when comparing Mt. Paul against a course at a different elevation.",
+      "_comment": "Elevation above sea level across the property, recorded 2026-07-25. A RANGE, not a point: the course falls roughly 70 ft from its high side to its low. Kept here rather than on the round record because it never varies between rounds — unlike tempC/windKmh, which are captured per round. Why it is recorded at all: thinner air at altitude increases carry, commonly reckoned at roughly 2% per 1,000 ft, so ~2% here. That is a constant offset for every round played at Mt. Paul, which means it explains nothing about variation BETWEEN rounds — it only matters when comparing Mt. Paul against a course at a different elevation.",
       "min_ft": 1130,
       "max_ft": 1200,
       "min_m": 344,
@@ -225,7 +226,208 @@
         ]
       }
     ],
-    "female": []
+    "female": [
+      {
+        "tee_name": "Blue",
+        "course_rating": 62.2,
+        "slope_rating": 95,
+        "number_of_holes": 18,
+        "par_total": 64,
+        "total_yards": 3974,
+        "holes": [
+          {
+            "par": 4,
+            "yardage": 275,
+            "index": 5
+          },
+          {
+            "par": 3,
+            "yardage": 137,
+            "index": 13
+          },
+          {
+            "par": 3,
+            "yardage": 179,
+            "index": 11
+          },
+          {
+            "par": 4,
+            "yardage": 300,
+            "index": 3
+          },
+          {
+            "par": 3,
+            "yardage": 95,
+            "index": 17
+          },
+          {
+            "par": 4,
+            "yardage": 345,
+            "index": 1
+          },
+          {
+            "par": 3,
+            "yardage": 135,
+            "index": 15
+          },
+          {
+            "par": 4,
+            "yardage": 251,
+            "index": 7
+          },
+          {
+            "par": 4,
+            "yardage": 270,
+            "index": 9
+          },
+          {
+            "par": 4,
+            "yardage": 275,
+            "index": 6
+          },
+          {
+            "par": 3,
+            "yardage": 137,
+            "index": 14
+          },
+          {
+            "par": 3,
+            "yardage": 179,
+            "index": 12
+          },
+          {
+            "par": 4,
+            "yardage": 300,
+            "index": 4
+          },
+          {
+            "par": 3,
+            "yardage": 95,
+            "index": 18
+          },
+          {
+            "par": 4,
+            "yardage": 345,
+            "index": 2
+          },
+          {
+            "par": 3,
+            "yardage": 135,
+            "index": 16
+          },
+          {
+            "par": 4,
+            "yardage": 251,
+            "index": 8
+          },
+          {
+            "par": 4,
+            "yardage": 270,
+            "index": 10
+          }
+        ]
+      },
+      {
+        "tee_name": "Red",
+        "course_rating": 58.6,
+        "slope_rating": 88,
+        "number_of_holes": 18,
+        "par_total": 64,
+        "total_yards": 3558,
+        "holes": [
+          {
+            "par": 4,
+            "yardage": 237,
+            "index": 5
+          },
+          {
+            "par": 3,
+            "yardage": 120,
+            "index": 13
+          },
+          {
+            "par": 3,
+            "yardage": 148,
+            "index": 11
+          },
+          {
+            "par": 4,
+            "yardage": 265,
+            "index": 3
+          },
+          {
+            "par": 3,
+            "yardage": 94,
+            "index": 17
+          },
+          {
+            "par": 4,
+            "yardage": 320,
+            "index": 1
+          },
+          {
+            "par": 3,
+            "yardage": 115,
+            "index": 15
+          },
+          {
+            "par": 4,
+            "yardage": 230,
+            "index": 7
+          },
+          {
+            "par": 4,
+            "yardage": 250,
+            "index": 9
+          },
+          {
+            "par": 4,
+            "yardage": 237,
+            "index": 6
+          },
+          {
+            "par": 3,
+            "yardage": 120,
+            "index": 14
+          },
+          {
+            "par": 3,
+            "yardage": 148,
+            "index": 12
+          },
+          {
+            "par": 4,
+            "yardage": 265,
+            "index": 4
+          },
+          {
+            "par": 3,
+            "yardage": 94,
+            "index": 18
+          },
+          {
+            "par": 4,
+            "yardage": 320,
+            "index": 2
+          },
+          {
+            "par": 3,
+            "yardage": 115,
+            "index": 16
+          },
+          {
+            "par": 4,
+            "yardage": 230,
+            "index": 8
+          },
+          {
+            "par": 4,
+            "yardage": 250,
+            "index": 10
+          }
+        ]
+      }
+    ]
   },
   "cachedAt": "2026-05-22"
 }

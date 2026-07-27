@@ -156,6 +156,25 @@ export function resolvePendingNine(pendingNine, justPlayedNine) {
   return { pairedRound: pairNineHoleRecords(pendingNine, justPlayedNine), newPendingNine: null };
 }
 
+// A recorded `ud` is only believable when the hole could actually have had an
+// up-and-down (Paul, 2026-07-26). Two combinations are physically impossible
+// and their ud value is ignored rather than trusted:
+//
+//   - ud AND gir       — hitting the green in regulation means there was no
+//                        par to save.
+//   - ud AND score > par — an up-and-down that finishes over par isn't one.
+//
+// Entry-time the app now prevents the first (see the rocker handler in app.js),
+// so this is the guard for records written before that rule existed, and for
+// anything imported. Audited against wip/test-rounds-20.json: 54 of 82 flags
+// there fail the second test, which is why nothing in Analytics reads ud any
+// more — Scrambling derives the same event from gir + score instead.
+export function isTrustedUpAndDown(hole) {
+  if (!hole || !hole.ud) return false;
+  if (hole.gir) return false;
+  return hole.score === hole.par;
+}
+
 // Rules that keep the numbers meaningful — do not violate these when writing holes:
 // - fir is null on par 3s, never false (no fairway exists to hit or miss).
 // - putts counts ONLY strokes taken with the ball already on the green. A putter

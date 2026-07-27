@@ -81,6 +81,12 @@ The screen is **deliberately blank** — template and plumbing only. `state.save
 
 The widow equivalent is NOT routed here — the Front 9 Score screen's own "Round Saved." posted state keeps the nine-hole scorecard visible behind the confirmation, which is more informative.
 
+## Worst round is never displayed (2026-07-26)
+
+Paul: *"People will remember their best round for the longest time. And want to forget their worst round as quickly as possible. So we won't be posting that."*
+
+`stats.js` still computes `season.worstRound`, with a comment explaining why it is not rendered. Nothing in `app.js` reads it. **Do not add a worst-round tile, row or chart.** Best round is fine — and note both are all-time figures, not last-20, since a personal best is a career number rather than a rolling-window one.
+
 ## Widows — short rounds (2026-07-26, Paul's spec, verbatim)
 
 > Most rounds will be 18 holes, but on occasion due to weather, we will quit after playing 9 holes. We might even be on Hole 16 and decide to quit. The standing order is to disregard the back 9 if it is incomplete, but to save the front 9 because it is complete. This 'solo' front 9 is considered as only 'half a round' and flagged as a "Widow". The widow is saved and stored in waiting to pair up with another Widow in order to make a completed round.

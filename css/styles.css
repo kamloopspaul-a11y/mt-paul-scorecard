@@ -1871,3 +1871,69 @@ body:not(.dark-mode) .saved-screen .brand-logo {
   text-transform: uppercase;
   color: var(--ink-muted);
 }
+
+/* ---- Trends: Last 20 Rounds (2026-07-26) --------------------------------
+   Six hero tiles, 3 across x 2 down, over a score-band distribution. Its own
+   classes rather than reusing .today-grid: that grid is half of the Today's
+   Round hero row and is sized against the score beside it, so borrowing it
+   would couple two layouts that need to move independently. */
+.trend-note {
+  margin: -2px 0 18px;
+}
+.trend-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px 0;
+  margin-bottom: 24px;
+}
+.trend-tile { text-align: center; }
+.trend-value {
+  font-family: var(--font-marquee);
+  font-size: 34px;
+  line-height: 1.05;
+  color: var(--ink);
+}
+.trend-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-top: 2px;
+}
+/* Sub-heading inside the section — smaller than the section heading above it,
+   so the hierarchy reads Trends > Score Distribution rather than two peers. */
+.trend-subheading {
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+/* Two-bar rows (Putts per GIR, Penalty Impact) need wider columns than a
+   nine-bar row — their labels are phrases, not single words. */
+.bar-row.thick.fit.wide-cols { gap: 16px; }
+.bar-row.thick.fit.wide-cols .bar-label { font-size: 12px; line-height: 1.3; }
+.bar-value.dim { color: var(--ink-muted); }
+/* Stated figure inside a section (Scrambling, handicap) — a sentence, not a
+   hero numeral. */
+.handicap-line {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 14px 0 2px;
+}
+
+/* Header row for the 20 Round Average table (Paul's comp, 2026-07-26). */
+.stat-table-headed th {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  text-align: left;
+  padding-bottom: 6px;
+}
+.stat-table-headed th:last-child { text-align: right; }
+

@@ -6,7 +6,13 @@
 
 ## Status
 
-**Version:** v1.0 (Passes 1-6 of the initial build complete, 2026-07-24) — functional, not yet committed to git, not yet tested on a real device/browser.
+**Version:** v1.0 — functional, committed 2026-07-27, verified in a real browser (Chrome, local dev server).
+
+**Analytics settled 2026-07-27.** Sixteen sections down to fourteen. The rule Paul set: *if no governing body defines it, it doesn't get a chart.* FIR, GIR, scrambling, putt distribution, score bands and the WHS handicap survive on that test; Score by Day of Week, Monthly Scoring Trend, 1 Putts and Penalty Impact were removed (all four kept in code, out of the render chain). "Hole Ratings" became "Strokes per Hole" for the same reason — the name implied a WHS quantity that doesn't exist.
+
+**Every rendered figure has been verified** against the raw rounds, independently of `stats.js` — including Net/Course Handicap, which was previously unverified. The arithmetic is sound throughout. The problems found were in what labels claimed, not what the maths did.
+
+**Membership ROI is the open area.** The ledger must wipe each 1 January (Paul, 2026-07-27) and currently does not — a season with no fees on file silently inherits the previous year's fee, round count and savings. A field for rounds played before install is specced and not built. See `JOURNAL.md` "NEXT SESSION".
 **Live URL:** https://kamloopspaul-a11y.github.io/mt-paul-scorecard/ (not yet redeployed with this build — still showing the old placeholder as of this writing).
 **GitHub repo:** `https://github.com/kamloopspaul-a11y/mt-paul-scorecard`.
 **Local folder:** `~/Documents/Studio/Projects/ScoreCard/`.

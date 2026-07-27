@@ -1875,3 +1875,211 @@ Under `prefers-reduced-motion` the whole sequence is skipped: no cards, no roll,
 - Temporary **19th Hole menu link** (added so the sequence could be reviewed without playing 18 holes) **removed** before this commit.
 - **Testing card in Settings deliberately KEPT** — Paul wants the 20-round dataset to review Analytics and walk the onboarding before it goes.
 - `sw.js` → **bogey-v9**, `index.html` → **?devcb39**.
+
+---
+
+## Session — 2026-07-26 (cont.) — Analytics built out; stats audited
+
+Ten sections built from Paul's pasted comps and wired to real data, all gated on a full 20 rounds (`isTwentyRoundStatsVisible`). Final order: Today's Round → four Weekly Reports → Last 10 Rounds → Trends: Last 20 (+ Score Distribution) → Best 8 of Last 20 → Hole Ratings → Membership ROI → Score by Day → Scoring Breakdown → Putting → 1 Putt Par Saves → Penalty Impact → Monthly Scoring Trend → 20 Round Average.
+
+### The UD story — where it landed
+
+Paul's definitions, which resolved a tangle:
+
+> UD = Par Saved. Scrambling = Ability to save Par, a skill... How the player saved Par isn't the factor, be it a One Putt, or a Chip In. The only thing that matters is missed GIR and made Par.
+
+So UD and Scrambling are **the same event**: UD is the count in one round, Scrambling the rate across twenty. Both are now **derived from `gir` + `score`** and neither reads the `ud` rocker. Today's Round's UD tile dropped from 5 to 0 when it stopped counting taps — that round had no genuine par saves.
+
+Scrambling is `score === par`, not `<= par`. Paul: *"You don't scramble to make less than par, that's good golfing."* **Note this diverges from the PGA Tour definition** (par or better), so the figure isn't comparable with tour or third-party numbers.
+
+Two impossible combinations are now blocked at entry — GIR and UD are mutually exclusive on the rocker row — and `round-record.js` gained `isTrustedUpAndDown()` for records written before that rule.
+
+### Audit results
+
+**Verified correct:** the WHS handicap engine (Score Differential, net double bogey 3.1b, the par+5 Rule 3.1a fallback for the first 3 rounds, the Rule 5.2a table, the 54.0 cap, and Course Handicap iterated to convergence — a faithful port reproduced HI 20.0 and all eight differentials exactly); FIR/GIR/PEN/Scrambling/putt distribution/penalty impact/hole ratings/score bands/day-of-week/monthly/par saves against the raw fixture; course ratings and all 18 stroke indexes against Paul's physical scorecard.
+
+**Test fixture flaw:** 50 of 82 `ud` flags sit on holes scored over par. Nothing reads `ud` any more, so nothing on screen is affected — but do not wire that field back up without regenerating the fixture.
+
+**Three false alarms I raised and had to retract** — worth remembering, all were my error not the app's:
+1. "Hole 6 reads +1.3, should be +1.2" — JS `toFixed` rounds half away from zero, Python `round` uses banker's rounding. App right.
+2. "Handicap is 19.8, app shows 20.0" — I applied net double bogey to all 20 rounds and missed Rule 3.1a's par+5 cap on the first three. App right.
+3. "Stroke indexes are all null" and "ladies' yardages are missing" — the field is called `index` not `si`, and nothing reads `tees.female`. App right both times.
+
+`tees.female` has since been filled anyway (identical holes, ladies' ratings) so the gap stops reading as missing data.
+
+### NEXT SESSION — start here
+
+**UD and Analytics accuracy**, per Paul. Open items:
+
+- **`1 Putt Par Saves` contradicts the UD definition.** It singles out the one-putt subset when Paul's position is that a chip-in counts equally, and it still uses `score <= par` where Scrambling uses `=== par`. Paul argued one-putts are a skill worth tracking in their own right, so the likely resolution is renaming it "1 Putts" and counting every one-putt green — last ten rounds would read `4,2,5,6,3,3,4,11,7,8` instead of `1,1,1,1,1,1,2,4,5,1`. **Not decided.**
+- **Score Distribution bands** (`<75 / 75-79 / 80-84 / 85+`) are hardcoded and skew for this player — 40% lands in the open-ended top bucket, so the mode is the worst bucket. Should derive from the player's own spread.
+- **Scoring Breakdown duplicates Today's Round's four buckets** at a different window — same chart shape twice on one page.
+- **Best Round is no longer displayed anywhere** since it came off the Trends grid. Worst Round deliberately never displayed — see CLAUDE.md.
+- **Unverified maths:** Membership ROI (break-even, per-round cost, savings) and the Net score on Today's Round. Everything else has been checked.
+
+### Housekeeping
+
+- **Work is UNCOMMITTED** — 6 files, ~600 lines, plus the filled `mt-paul-course-data.json`.
+- **`sw.js` is at `bogey-v9`, which is already deployed.** Must bump to v10 before the next push or phones will keep serving the old `app.js`/`stats.js` and none of this Analytics work will appear.
+- Testing card still in Settings by Paul's choice — remove before sharing with Dave.
+- GitHub PAT sits in plaintext in `.git/config`; fine-grained, scoped to this repo only, expires 31 Dec. Year-end job.
+
+---
+
+## Session — 2026-07-27 — UD resolved: one home, one definition
+
+Picked up the open UD item. Local dev server run from Paul's Mac (`python3 dev-server.py`), verified in Chrome at `localhost:8000`, not in a sandbox harness.
+
+### `1 Putt Par Saves` was wrong in the opposite direction to what was recorded
+
+Last session flagged it as too *narrow* — the one-putt subset of a method-agnostic stat. It was also too *wide*: the filter was `!gir && putts === 1 && score <= par`, and `score <= par` admits birdies from off the green. Against the fixture's last ten rounds it read `1,1,1,1,1,1,2,4,5,1` where the true par-save count is `1,1,1,1,1,1,2,4,4,0` — higher in two rounds, including one round claiming a save where there were none.
+
+So it contradicted Scrambling on definition *and* arithmetic, and correcting it to `=== par` would only have turned it into a per-round redraw of Scrambling. Paul took the other branch: **renamed "1 Putts", counting every one-putt green** — `!gir` and the score test both dropped. Series becomes `4,2,5,6,3,3,4,11,7,8`, which duplicates nothing and gives the chart real shape for the first time (it was a flat row of 1s).
+
+### UD was printing three times as the same number
+
+`UD 12%` in the Trends grid, `UD 12%` in the 20 Round Average table, `Scrambling: 12%` under Putting — one stat, three headings, nothing on screen to say they weren't three stats that happened to agree. Paul: keep the Trends tile, where UD reads as a peer of FIR/GIR/PEN. Dropped the 20 Round Average row and the Putting card's Scrambling line.
+
+### A window bug that was invisible by coincidence
+
+`scrambling` is computed off `allHoleRecords`, but every surviving render of it sits under a heading claiming the last 20 rounds. The fixture holds exactly 20 rounds, so all-time and last-20 were the same number and the mismatch never showed. Added `scrambling20` (same `!gir && score === par` rule, `last20HoleRecords`) and repointed the Trends tile at it. `scrambling` stays computed for any future section that genuinely wants a career figure.
+
+Same class of problem, left alone deliberately: `puttDistribution` is also all-time under a last-20 page. Rather than silently rewindow a stat Paul hadn't asked about, the Putting caption now says "All rounds" out loud — the Trends note's "unless otherwise noted" escape hatch, used honestly. Windowing it to 20 is a one-line change if that's preferred.
+
+### Changed
+
+- **`js/stats.js`** — `onePuttParSaves` → `onePutts` (count of `putts === 1` per round, last 10); new `scrambling20`; both exported.
+- **`js/app.js`** — section renamed "1 Putts" with a new caption; UD row removed from 20 Round Average; Scrambling line removed from the Putting card and its caption made explicit about the window; Trends UD tile reads `scrambling20`.
+- **`sw.js`** — `CACHE_NAME` bumped `bogey-v9` → `bogey-v10`.
+
+### Verified in-browser
+
+Every figure recomputed independently from `localStorage` before and after: 1 Putts `4,2,5,6,3,3,4,11,7,8`, Trends UD 12% (28 par saves / 238 missed greens), UD absent from 20 Round Average, Scrambling line absent from Putting. No console errors. Also confirmed **not** a bug: Membership ROI's "Rounds Played 54" is the `roundsToDate` settings field, not a derived count — history holds 20 rounds and should not agree with it.
+
+### Then removed again, same session
+
+Paul pulled **both `1 Putts` and `Penalty Impact`** off Analytics. Following the convention set on 2026-07-25 for the four twenty-round sections: the builders stay in `renderAnalytics()` and the `stats.js` computations (`onePutts`, `penaltyImpact`) are untouched — only the `trends` concatenation chain changed, so restoring either is one line in position. Both consts are now marked BUILT-BUT-NOT-RENDERED with the reasoning next to them.
+
+Worth noting so it doesn't read as a gap later: PEN survives as a rate in three places (Today's Round count, Trends tile, 20 Round Average row). What left the page is the strokes-lost comparison, not penalties as a stat. Putting is now three bars and nothing else.
+
+`Scoring Breakdown` renamed **`Stats Breakdown`**, and its caption cut from "Share of holes played, last 20 rounds." to just the window label (Paul). The caption renders `windowLabelTitle`, not a hardcoded "Last 20 Rounds", so it stays honest if the section ever draws below a full 20. Otherwise heading and caption text only — the `scoringBreakdown` const, the `a.scoreDistribution` fields it reads, and the "Share of holes played, last 20 rounds" caption are all unchanged. `sw.js` → `v12`.
+
+Section order after these passes: Today's Round → four Weekly Reports → Last 10 Rounds → Trends: Last 20 (+ Score Distribution) → Best 8 of Last 20 → Hole Ratings → Membership ROI → Score by Day → Scoring Breakdown → Putting → Monthly Scoring Trend → 20 Round Average. Sixteen headings down to fourteen. `sw.js` bumped again, `v10` → `v11`.
+
+### Score by Day of Week — caption
+
+Paul asked what the bars actually were. Answer: average gross 18-hole strokes, last 20 rounds — the same figure Last 10 Rounds charts, bucketed by weekday. The caption said neither of those things; it only explained the dash.
+
+Now reads **"Average 18 hole score, last 20 rounds."**, matching Hole Ratings' wording. `scoreByDayHTML()` gained a `windowLabelTitle` param (defaulted) so it names its own window instead of hardcoding 20. The dash is no longer explained in prose — the `avg: null` → empty-rule path in `stats.js` is untouched, an absent bar just reads as absence now.
+
+Then, on seeing the numbers behind it, Paul cut the section entirely — **"this is a custom Stat."** That's the sharper reason: FIR, GIR, scrambling, handicap and putt distribution all have a definition someone else owns, and Score by Day had none. The sample maths agreed — 20 rounds across 7 weekdays is 2-5 rounds per bar (Sun 3, Mon 5, Tue 0, Wed 3, Thu 4, Fri 3, Sat 2), and Thursday's four alone spanned 67 to 91, a wider range inside one day than between any two days. The 13-stroke Wednesday-vs-Monday gap it drew was noise wearing a chart.
+
+Removed the same way as the others: `scoreByDayHTML()` and `stats.js`'s `scoreByDay` both survive, only the `trends` chain changed. The caption work above is therefore preserved but unrendered — deliberate, so nothing has to be rebuilt if it earns its place back at a few hundred rounds.
+
+### Hole Ratings → Strokes per Hole
+
+Renamed (Paul). The old heading borrowed WHS vocabulary: Course Rating and Slope Rating are defined things this app actually computes, and a "Hole Rating" is not one of them — the label implied a standard that doesn't exist. Same custom-stat instinct that killed Score by Day, applied to a name rather than a section.
+
+Renamed in both places: the live section and the round-zero empty state ("Play a round to see your hole-by-hole average."). The `holeRatings` const, `holeRatingBarsHTML()` and `stats.js`'s `holeRatings` keep their names. Caption trimmed to "Average, last 20 rounds." since the heading now carries "strokes per hole" and the old caption restated it word for word.
+
+**Checked while in there, not a bug:** the chart draws 9 bars, not 18. `stats.js` detects a double loop — if the back nine's pars match the front nine hole for hole, it pools both plays — so Mt. Paul reads as 9 holes at 40 plays per bar instead of 18 at 20. Deliberate and correct.
+
+### Monthly Scoring Trend removed
+
+Fourth and last section off the page today, same test as Score by Day: a custom stat on a sample that couldn't carry it. Twenty rounds split by calendar month gave three bars — 83.0 May, 82.9 June, 81.5 July. A 1.5-stroke spread, comfortably inside the noise of a single round, drawn range-scaled so that gap filled the frame and read as improvement. It also answered roughly what Last 10 Rounds answers, one zoom level out.
+
+Removed the same way as the rest: builder intact, `stats.js`'s `monthlyScoring` untouched, only the `trends` chain changed.
+
+### Last 10 Rounds → Scores: Last 10 Rounds
+
+Renamed (Paul), into the `subject: window` form already used by "Birdies: Weekly Report" and "Trends: Last 20 Rounds". Naming the subject earns its place here — the bars are gross 18-hole strokes, and the page carries differentials and a net score that a bare "Last 10 Rounds" could be read as. Caption dropped its window (now in the heading) and kept only "Most recent on the right."
+
+### Trends caption → footnote
+
+Heading becomes `Trends: Last 20 Rounds*`, caption becomes `*Unless otherwise noted.` (Paul). The old caption — "All stats are based on the last 20 rounds, unless otherwise noted." — restated the heading in full before reaching its one piece of new information.
+
+The asterisk is load-bearing, not decoration: this note governs every section below it, not just the Trends grid, and the sections that break the rule say so in their own captions (Putting: "All rounds"). If either mark is reworded, reword both.
+
+### Analytics audit, and the one false claim on the page
+
+Every rendered figure recomputed from the raw rounds, independently of `stats.js`. **All arithmetic checks out**: FIR 48 / GIR 34 / PEN 5 / UD 12 / Putts 32.9, Score Distribution 15/20/25/40, Stats Breakdown 6/30/33/31, Putting 28/61/11, all ten Last 10 scores, all sixteen Weekly Report values, Last Round's 22/17/39/22, and every Membership ROI figure.
+
+**Net and Course Handicap now verified** and off the journal's unverified list: 20.0 × 86/113 + (59.0 − 64) = 10.22 → CH 10; 77 − 10 = Net 67. Correct, and correct for the right reason — it uses Course Handicap, not Index.
+
+**Three non-bugs, recorded so they don't get re-raised:** FIR's par-4+ denominator matches capture (Pass 7 hides the FIR rocker on par-3s, and all 160 par-3 holes in the fixture carry `fir: null`); Strokes per Hole draws 9 bars because double-loop pooling works; ROI's "54 rounds" is the `roundsToDate` settings field and is not supposed to match the 20-round history.
+
+**The one false claim: "Today's Round" was never today's round.** It reads `mostRecentRound()` — `stats.js` says so in its own comment, *"Today's Stats (most recent round only)"*. On 2026-07-27 it displayed a round played 2026-07-25, under a page dateline rendering `new Date()` as "Jul 27 2026". Two elements agreeing on something untrue.
+
+Fixed by stamping the round's own date: **`Last Round: Jul 25 2026`**, via a new `roundDateLabel()` helper matching the dateline's format. Paul's call, and the right one — a date reads correctly whether or not the round happened today, so it needs no gating and no conditional wording. The `todaysStats` / `todaysVisible` identifiers keep their names; display text only.
+
+### Consistency problems found, not yet fixed
+
+- **`20 Round Average` is now fully redundant.** With the UD row removed this morning it holds FIR 48 / GIR 34 / PEN 5 / Putts 32.9 — every one identical to the Trends grid, which additionally carries HI. A strict subset. UD was the only row unique to it.
+- **UD carries two units under one label.** Last Round's tiles are counts (5 FIR, 6 GIR, 1 PEN, 0 UD, 30 PUTTS); the Trends tiles are rates (48% FIR, 12% UD). Same labels, same tile treatment. "UD 0" beside "UD 12%" is the pair most likely to read as an error.
+- **Putting is the only all-time stat on a page declaring last-20.** Invisible while history is exactly 20 rounds; becomes a silent career figure at round 21.
+- **`Today's Savings` in ROI** has the same flaw the round heading had — it is the marginal value of one more round, not anything about today.
+- Score Distribution's hardcoded bands (40% in the open-ended 85+ bucket), and its top-level heading weight while nested under Trends, next to the near-synonym Stats Breakdown.
+- Captions still in three registers.
+
+### Where Analytics landed
+
+Sixteen headings at the start of the day, fourteen now, and the four that left were the four with no governing definition behind them. What's rendered, in order: Today's Round → four Weekly Reports → Scores: Last 10 Rounds → Trends: Last 20 (+ Score Distribution) → Best 8 of Last 20 → Strokes per Hole → Membership ROI → Stats Breakdown → Putting → 20 Round Average.
+
+The through-line Paul set, worth keeping: **if no governing body defines it, it doesn't get a chart.** FIR, GIR, scrambling, putt distribution, the WHS handicap and its differentials all survive on that test. Score by Day, Monthly Trend, 1 Putts and Penalty Impact didn't. "Hole Ratings" failed a milder version of it — the stat was fine, the name implied a WHS quantity that doesn't exist, so it became Strokes per Hole.
+
+`sw.js` ran v9 → v17 across the session.
+
+### DECIDED — wipe the ledger every 1 January
+
+Paul, 2026-07-27: **"There may be years where there isn't any fee increase. But we should wipe the Ledger each Jan 1."**
+
+So a season's ROI is built ONLY from fees filed under that season. No carry-forward, ever, even when the fee is unchanged year to year — an unchanged fee still has to be entered for the new season before that season has a ledger.
+
+**The bug this overrules.** `seasonSettings()` falls back to the flat top-level `membershipFee` / `greenFee` / `roundsToDate` when a year has no bucket. Its own comment concedes the problem: *"they answer for any year rather than none."* That fallback was written to migrate records saved before per-season fees existed, but `app.js` keeps the flat fields in sync on every save, so it is live for every user forever.
+
+Verified, not theorised — with only 2026 on file, `membershipROI(rounds, settings, new Date('2027-01-15'))` returned:
+
+    season 2027 · membership $1,450 · roundsPlayed 54 · savings $980
+
+2026's fee, 2026's round count and 2026's savings, relabelled 2027. Same answer on 2027-03-20. Since Mt. Paul fees are set in spring (mid-March) and Kamloops has no golf Nov 15 - Mar 15, that fallback covers exactly the window where the number is most wrong and least checkable.
+
+**The fix:** once `settings.seasons` holds any bucket, stop falling back to the flat fields. A year with no fees entered returns no season settings, `membershipROI()` returns null, and the section simply doesn't render until the new fees are entered in March. The flat-field fallback stays only for records with no `seasons` key at all — genuine legacy, which after the pre-ship wipe means nobody.
+
+Do NOT fix this by clearing the flat fields on 1 January: nothing runs on 1 January. It has to be a read-time rule.
+
+### NEXT SESSION — start here
+
+**1. Wipe the ledger each 1 January** (decided above). Read-time rule in `seasonSettings()`. Also needed alongside it: no way currently exists to view a finished season — the screen always passes `new Date()`, so on 1 January the 2026 result becomes unreachable. `membershipROI()` already accepts a date, so a season selector is small.
+
+**2. Rounds-before-install field** (Paul's wish list, spec settled 2026-07-27). Dave has ~48 rounds this season predating the app and wants their savings counted.
+
+Paul's rule for what is a real round, which makes the two impossible to confuse: **a round counts if it has a date and 18 hole scores** (two nines pair into one 18, taking the earlier date). The estimate has no hole scores, so it can never leak into a golf statistic.
+
+- One number field in Settings, beside the fee inputs.
+- Membership ROI counts it PLUS real rounds.
+- Analytics, handicap and the rounds count everywhere else ignore it entirely — so the RTD tile shows real rounds only.
+- Imported rounds arrive with hole scores and therefore count everywhere, automatically. No special casing.
+
+**Must be additive, or it freezes.** Verified: `roundsToDate()` returns the seed and stops. Seeded 48 with 20 rounds logged gives RTD 48 / $710 / $30.21 — identical to seeded 48 with ZERO logged. Every round Dave plays after entering the number would change nothing. Fix:
+
+    return Math.round(seeded) + roundsInSeason(roundsHistory, year).length + offSeason;
+
+Once the ledger wipes each January the seed is naturally a one-season figure, which is what it should be.
+
+**3. Fee tiers — status.** Green fee tiering works; verified with $45 from January and $55 from July: the 12 rounds before July stayed at $45, the 8 after came out at $55, gross $980 not $900, and break-even recalculated forward at the new rate (27, not 33). Two gaps: there is no UI to choose the cut-off date (a Settings edit always starts the new rate TODAY, so a rise can't be backdated), and the membership fee has no tiers at all — editing it restates the whole season ($1,450 to $1,600 moved savings from -$550 to -$700). Paul has not said either is a problem.
+
+**4. `Today's Savings` in ROI** still misnames itself — it is the marginal value of one more round, unrelated to any date. Same flaw the Last Round heading had.
+
+### Still open
+
+- Score Distribution bands `<75 / 75-79 / 80-84 / 85+` are hardcoded; 40% lands in the open-ended top bucket, so the mode is the worst bucket. Should derive from the player's own spread.
+- Scoring Breakdown still duplicates Today's Round's four buckets at a different window — same chart shape twice on one page. (The UD pass fixed the *number* duplication; this is the surviving *chart* duplication.)
+- Best Round is displayed nowhere since it came off the Trends grid.
+- Unverified maths: Membership ROI break-even/per-round/savings, and Today's Round Net.
+- Early gating ladder still deferred.
+
+### Housekeeping
+
+- **Work is UNCOMMITTED** and now sits on top of the previous session's uncommitted ~600 lines.
+- Testing card still in Settings by Paul's choice — remove before sharing with Dave.
+- The fixture's `ud` flags remain unusable (50 of 82 sit on holes scored over par). Nothing reads the field. Do not wire it back up without regenerating the fixture.
