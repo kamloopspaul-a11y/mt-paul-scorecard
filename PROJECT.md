@@ -42,6 +42,7 @@ these again, don't: the reason is here, and re-litigating it costs Paul time he 
 | Deep Analytics waits for twenty rounds | 2026-07-26, Paul | "Are there 20 rounds yet, yes-then render, no-stay hidden." Below that the windows aren't full and a "20 round" heading would be describing three. |
 | FIR shows on every hole, including par-3s | 2026-07-23, Paul | Owner decision. |
 | The app is not developed for desktop browsers | 2026-08-10, Paul | The target is an installed PWA. Chrome on the dev server is a build convenience, not the bar. |
+| Safari on iOS is the routine test; no PWA build per session | 2026-08-10, Paul | Paul tests changes in Safari and only chases what looks wrong. Installing after every session costs time and reveals nothing new. Do not ask him to install to verify ordinary changes. |
 | "Captions in three registers" is dropped | 2026-08-10 | Carried in notes for weeks with no statable test. Nobody could say what would close it, so it should never have been written down. |
 | Pushes are batched to end of session | 2026-08-10, Paul | Per-edit pushes make the Pages redeploy wait dominate the session. |
 
@@ -52,7 +53,7 @@ and doesn't belong in this file.
 
 | Open item | Closed when |
 |---|---|
-| On-device pass never done | Installed from the home screen on a phone, then: both webfonts render, dark mode is right, and the app works with the network off. |
+| One-time install pass never done | Routine testing is Safari on iOS and that is correct — it covers layout, copy, colours, flow, fonts and dark mode. Installing to the home screen reveals only three things and is done **once**, before Dave gets the link: nothing hides under the notch or home indicator, the icon opens to the right screen, and the app still works with the network off. Share-sheet testing waits until CSV export exists. |
 | Post-onboarding landing screen undecided | Paul says Home or Settings for a first-time finish. Nothing to build until then. |
 | Best Round is displayed nowhere | It came off the Trends grid and never landed anywhere else. Closed when it appears somewhere on Analytics. |
 | Membership ROI needs seeding for Dave | Dave's rounds played before install are counted in ROI and nowhere else. Two possible forms: a typed number, or a CSV out of Apple Numbers whose columns won't match ours. |
