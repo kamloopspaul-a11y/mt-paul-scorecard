@@ -2083,3 +2083,50 @@ Once the ledger wipes each January the seed is naturally a one-season figure, wh
 - **Work is UNCOMMITTED** and now sits on top of the previous session's uncommitted ~600 lines.
 - Testing card still in Settings by Paul's choice — remove before sharing with Dave.
 - The fixture's `ud` flags remain unusable (50 of 82 sit on holes scored over par). Nothing reads the field. Do not wire it back up without regenerating the fixture.
+
+---
+
+## 2026-08-10 — Birdie label; docs de-duplicated; two standing rules added
+
+**Paul was reviewing Analytics to re-familiarise, not to build.** Ten rounds logged, so only Last Round, the four Weekly Reports, Scores: Last 10 Rounds and Membership ROI render. Everything else sits behind the twenty-round gate. Nothing is broken.
+
+**The one visible fix.** Last Round's first bar was labelled `'≤ Birdie'`. In the four-column grid on a phone the operator wraps onto its own line above the word, and a lone glyph at 14px reads as an "s" — Paul saw "s Birdie" and correctly guessed it was a wrap. The operator was also inconsistent: all three charts using this bucket share `h.score < h.par`, and the other two label it "Birdie" and "Birdies". Reduced to `'Birdie'`. `CACHE_NAME` v20 → v21, `?devcb39` → `?devcb40`.
+
+**Git was blocked by two stale locks** — `.git/index.lock` and `.git/HEAD.lock`, both zero-byte, both dated 27 July, both left behind when that session ended. `rm` failed with EPERM until file deletion was enabled for the Studio folder. Worth knowing: the first push reported "Everything up-to-date" while three files sat modified. A push that looks successful is not evidence.
+
+### The real subject of the session
+
+Paul read back four things I had told him as current fact. All four came from these notes, none from checking:
+
+- work was uncommitted (it was committed)
+- the live URL served a placeholder (it served the real build)
+- `sw.js` was at v4 (it was v21)
+- "captions in three registers" (I repeated it as a finding, then could not locate what it referred to)
+
+He had no way to catch any of it. **He reviews the render, not the code.** He rarely reads these files — they exist for whoever reads them next, which is me. So a stale line here becomes a confident wrong statement to him, and he approves changes on it.
+
+His framing, which is the thing to keep: *"these notes to self you write, also confuse you and then you recommend a change, which I unwittingly approve, which breaks something else half of the time."*
+
+**What changed as a result.**
+
+1. **All duplicated facts deleted rather than corrected.** `bogey-v4` appeared three times in `PROJECT.md` while `sw.js` was at v21 — removed, not updated. Commit date dropped from Status; git owns it. A "Single Source of Truth" section now names the owner of each fact.
+2. **`PROJECT.md` open items and Next Steps replaced by two lists**: **Settled** (who decided, why, do not re-open) and **Open** (each with the test that closes it). Nothing goes on Open without a statable test — that rule is what retires the captions line, which sat unresolved for weeks because nobody could say what would close it.
+3. **`Studio/CLAUDE.md`** gained the single-source rule (all projects), **Step 5** (verify the previous session's push landed), and **close item 6** (give Paul a plain-language checklist at push time).
+
+### How to talk to Paul — apply this from here
+
+No file names, no function names, no line numbers. "renderOnboarding at app.js line 1001" told him nothing; "the welcome screens are built" was the sentence. If it can't be said in plain words, it isn't understood yet. When two records disagree, tell him what it means for the app, not which file is wrong.
+
+Also his working constraints, stated this session: four or five edits per session is the sweet spot; sessions shouldn't run long or there's too much to notate; and — his observation, accepted — Claude gets defensive about its own work and argues changes. When Paul overrules, it goes in Settled, not back into discussion.
+
+### Settled this session
+
+Score Distribution bands (they suit our level of play). ROI ledger work parked — Paul will seed real rounds before Dave gets it. Desktop browsers are not the target; Safari on iOS is the routine check and one PWA install pass happens once, before handoff, not per session. Pushes batch to end of session.
+
+### Corrected in the notes
+
+My Open entry said the on-device pass closes when the app runs from the home screen offline. Wrong — that imposed a workflow Paul doesn't use. Safari covers almost everything; installing only reveals the screen edges under the notch and home indicator, what the icon opens to, and later the share sheet.
+
+### Next session
+
+Open Step 5 first: confirm tonight's push landed and the Birdie label reads correctly. Then Paul's list — ROI seeding for Dave (typed number or Apple Numbers CSV, columns unknown), Best Round displayed nowhere, the two unverified figures, and the testing card out of Settings before handoff.
