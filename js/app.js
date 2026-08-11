@@ -2164,7 +2164,7 @@ function todaysStatsHTML(t, roundsToDate, handicap, roundsCount) {
         </div>
       </div>
       ${barRowHTML([
-        { label: '\u2264 Birdie', pct: t.birdie.pct },
+        { label: 'Birdie', pct: t.birdie.pct },
         { label: 'Par', pct: t.par.pct },
         { label: 'Bogey', pct: t.bogey.pct },
         { label: 'Bogey+', pct: t.bogeyPlus.pct }
