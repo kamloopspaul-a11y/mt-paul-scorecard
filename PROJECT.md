@@ -29,13 +29,44 @@
 - **Architecture**: multi-file (`index.html` + `css/styles.css` + `js/*.js` ES modules), not a single-file app. Data-layer modules (`round-record.js`, `settings-record.js`, `stats-defaults.js`) came verbatim from the design handoff and are considered stable/correct — don't rewrite their logic, only the app shell/UI around them.
 - **Pass 6 additions (2026-07-24 — real bugs found on the live build)**: Stats Console rebuilt field-for-field from `Design Handoff/Stats Counter.dc.html` (the FIR/GIR/PEN/UD rocker track is always `rgba(0,0,0,.4)`, only the knob moves/recolors, labels dim/brighten, Putts redesigned as arrow/box/arrow with a Spline Sans Mono digit); logo forced black in Light Mode (`brightness(0)` filter); a real slide-out hamburger menu (Analytics/Play Round/Settings) available from every topbar; putts now default to 2, not 0; every hole 2-18 has both Back and Next (Hole 10's Back goes to the new Front 9 Score screen instead of Hole 9); a new Front 9 Score mid-round scorecard screen after Hole 9 (Continue/Quit toggle for an 18-hole session in flight, Post Now for a standalone 9-hole session); shared `scoreCellHTML()` birdie/bogey/double-bogey+ cell styling on both Final Score and Front 9 Score. See `JOURNAL.md` Session 10 for full detail.
 
-### Known limitations / open items
-- **On-device pass still outstanding.** Verified in Chrome against the local dev server. Not yet exercised as an installed PWA on a phone, which is the only place the two webfonts, dark mode, and offline/service-worker behaviour can actually be checked. Worth doing before sharing with Dave.
-- **Onboarding movie-credits copy was reconstructed**, not transcribed verbatim, from a garbled/overlapping source image layer — worth checking against the original design file if the exact wording/names matter.
-- **Post-onboarding landing screen is still an open decision.** Right now, completing Setup for the first time lands on Home, and every later launch also lands on Home. Paul is considering having first-time completion land on Settings instead (so a new player reviews their info before playing), with Home only as the default on later launches — deferred until after this build review.
-- **No dark-mode source mockup exists** — the dark palette (dark background, off-white text, same maroon CTA gradient) was a judgment call, not a spec match.
-- **CSV Export/Import is deferred.** The Settings screen shows the row per the mockup but it's non-functional (shows a "coming soon" toast). See the "Export / Import — CSV Backup" section below for the already-researched spec to build against when this phase starts.
-- **`sw.js`'s `CACHE_NAME` must be bumped** any time a precached file's content changes, or already-installed users will keep serving stale assets. Bump `index.html`'s `?devcb` cache-buster with it. **The current version is recorded in `sw.js` and nowhere else — do not copy it into this file.**
+### Settled — do not re-open
+
+Closed decisions. Each carries who decided and why. If you find yourself about to raise one of
+these again, don't: the reason is here, and re-litigating it costs Paul time he has already spent.
+
+| Decision | Closed | Why |
+|---|---|---|
+| Score Distribution bands stay as they are | 2026-08-10, Paul | The bands suit our level of play. The 40%-in-the-top-bucket observation is not a defect. |
+| Membership ROI ledger work is parked | 2026-08-10, Paul | ROI will be seeded with real rounds before Dave gets it. The 1-January wipe spec stays in `JOURNAL.md`, unbuilt, on purpose. |
+| Analytics section list is final at fourteen | 2026-07-27, Paul | The rule: if no governing body defines it, it doesn't get a chart. Four sections were cut on that test and kept in code, out of the render chain. |
+| Deep Analytics waits for twenty rounds | 2026-07-26, Paul | "Are there 20 rounds yet, yes-then render, no-stay hidden." Below that the windows aren't full and a "20 round" heading would be describing three. |
+| FIR shows on every hole, including par-3s | 2026-07-23, Paul | Owner decision. |
+| The app is not developed for desktop browsers | 2026-08-10, Paul | The target is an installed PWA. Chrome on the dev server is a build convenience, not the bar. |
+| "Captions in three registers" is dropped | 2026-08-10 | Carried in notes for weeks with no statable test. Nobody could say what would close it, so it should never have been written down. |
+| Pushes are batched to end of session | 2026-08-10, Paul | Per-edit pushes make the Pages redeploy wait dominate the session. |
+
+### Open — each with the test that closes it
+
+Nothing goes on this list without a test. If the test can't be written, the item isn't real yet
+and doesn't belong in this file.
+
+| Open item | Closed when |
+|---|---|
+| On-device pass never done | Installed from the home screen on a phone, then: both webfonts render, dark mode is right, and the app works with the network off. |
+| Post-onboarding landing screen undecided | Paul says Home or Settings for a first-time finish. Nothing to build until then. |
+| Best Round is displayed nowhere | It came off the Trends grid and never landed anywhere else. Closed when it appears somewhere on Analytics. |
+| Membership ROI needs seeding for Dave | Dave's rounds played before install are counted in ROI and nowhere else. Two possible forms: a typed number, or a CSV out of Apple Numbers whose columns won't match ours. |
+| Two figures never hand-checked | Membership ROI break-even/per-round/savings, and Last Round's Net. Closed when each is worked out by hand against raw rounds and matched. Note `PROJECT.md` and `JOURNAL.md` disagreed about whether Net was already done — trust neither, redo it. |
+| Settings still shows the testing card | Removed before the link goes to Dave. |
+| Onboarding credit copy was reconstructed, not transcribed | Compared against the original design file, if the exact names matter. |
+| Dark palette was a judgment call | No source mockup exists. Closed when Paul approves the dark theme on a real device, or supplies one. |
+| CSV Export/Import not built | A deferred phase, not a defect. Spec is in "Export / Import — CSV Backup" below. |
+
+### Working rule, not an open item
+
+**`sw.js`'s `CACHE_NAME` must be bumped** any time a precached file's content changes, or already-installed
+users will keep serving stale assets. Bump `index.html`'s `?devcb` cache-buster with it. **The current version
+is recorded in `sw.js` and nowhere else — do not copy it into this file.**
 
 ---
 
@@ -121,7 +152,7 @@ then misleads the next session. Known owners:
 | Asset cache-buster (`?devcb`) | `index.html` |
 | Course/tee/handicap data | `mt-paul-course-data.json`, `mt-paul-handicap-ratings.json` |
 | Gating thresholds (1 / 2 / 20 rounds) | `js/stats.js` — `isTodaysStatsVisible`, `isWeeklyChartsVisible`, `isTwentyRoundStatsVisible` |
-| Build status and open items | this file |
+| Build status, settled decisions, open items | this file — the two lists under Status |
 | Session history and decisions | `JOURNAL.md` |
 | Where to resume | `Studio/TODO_LIST.md` — a pointer only, never a restatement |
 
@@ -142,10 +173,3 @@ then misleads the next session. Known owners:
 
 ---
 
-## Next Steps
-
-1. Real-browser/on-device smoke test (dark mode, webfonts, offline/service-worker behaviour, share-sheet-adjacent UI).
-2. Decide the post-onboarding landing screen question (Home vs Settings on first completion).
-3. Commit and push to GitHub, redeploy GitHub Pages.
-4. Share with Dave for first real-world use.
-5. When ready: build CSV Export/Import per the researched spec above.
