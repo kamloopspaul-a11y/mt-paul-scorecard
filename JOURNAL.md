@@ -2130,3 +2130,147 @@ My Open entry said the on-device pass closes when the app runs from the home scr
 ### Next session
 
 Open Step 5 first: confirm tonight's push landed and the Birdie label reads correctly. Then Paul's list — ROI seeding for Dave (typed number or Apple Numbers CSV, columns unknown), Best Round displayed nowhere, the two unverified figures, and the testing card out of Settings before handoff.
+
+---
+
+## 2026-08-17 — Bar & Grill Menu screen added
+
+**What Paul asked for.** A new page carrying the clubhouse's food and drink menu, linked from a new entry in the slide-out menu, built to this app's design schema but laid out like the printed sheet he supplied images of.
+
+**What was built.**
+
+- `js/bar-menu.js` — the menu as data plus a small renderer. Thirteen groups, 75 priced items, two extras grids and the draft table. Six block types cover every shape on the printed sheet: `sub`, `note`, `items`, `pairs`, `draft`, `text`.
+- A `.bgm-*` block appended to `css/styles.css`, and `renderBarMenu()` + a `barmenu` route in `js/app.js`.
+- A "Bar & Grill Menu" item in the flyout, sitting between Analytics and Play Round.
+
+**Three decisions worth recording.**
+
+1. *The data is data, not markup.* Prices are stored bare ("4.15") and the dollar sign is added at render. A price change is now a one-token edit and no row can drift into a different format. Verified: all 75 prices match `\d+\.\d{2}`.
+2. *The `bgm-` prefix is not decoration.* `.menu-item`, `.menu-header` and `.menu-label` already belong to the slide-out flyout. A menu page inside an app that has a menu overlay is precisely where a class collision would hide, so the new page shares no class name with it.
+3. *`barmenu` was added to `RESTORABLE_SCREENS`.* It is read-only and touches no round data, so coming back to it after a reload is safe — unlike the review screens deliberately kept off that list.
+
+**Layout follows the print piece; type does not.** Name left, price right, italic description under, hairline rules between groups — that is the printed sheet, and it is also how Analytics already reads. But the sheet's script and serif faces were not reproduced: titles take `--font-marquee`, everything else `--font-ui`, and the section colour is `--cta-start`, the same maroon as the rest of the app. The page should read as part of the app, not as a scan of the paper menu.
+
+**Three things transcribed verbatim that may be errors on the clubhouse's own sheet.** Not corrected — flagged for Paul, and recorded in PROJECT.md's Open list:
+- "Onions $2.25" appears twice in Add Extras, in adjacent rows.
+- "Warmed Liqueres" (the sheet's spelling).
+- "Triple Bogie", in an app called A Bit of Bogey.
+
+**Verification.** Both modified JS files pass a syntax check. The renderer was executed outside the browser and its output measured: 13 groups, 75 items, zero malformed prices. The page was then rendered at iPhone 13 width in a real browser and screenshotted at the top, three midpoints and the bottom — every group, both grid types and the draft table render correctly, and the Home button lands where it should. Note the screenshots show the fallback font stack: the sandbox has no route to Google Fonts, so Bebas Neue and Hanken Grotesk did not load there. They will on a real device.
+
+**Not pushed.** Pushes batch to end of session. `sw.js` `CACHE_NAME` bumped v21 -> v22 and `index.html`'s buster ?devcb40 -> ?devcb41, with `js/bar-menu.js` added to `PRECACHE_URLS`.
+
+**Untested on a real device.** Everything above is a desktop browser at phone dimensions. This page is long — about 5,700px — and is a fair candidate for the one-time install pass that is already open ahead of Dave's handoff.
+
+**Same session — tightening pass (Paul's review).** Four changes:
+
+1. Heading is now "Mt. Paul Bar & Grill"; the "Mt. Paul Golf Course" dateline under it is gone.
+2. Add Extras and Add Extras or Substitutions take the sub-heading type instead of the poster title, matching Lil' Grill and Big Grill. Implemented as a `smallTitle` flag on the group rather than a second title field, so the data still says *what* a group is and the flag only says how prominently it reads.
+3. Dips & Salad Dressings dropped from the two-across grid to a single name/price column, with Feta Cheese and Guacamole on their own rows.
+4. `sw.js` v22 -> v23, buster ?devcb41 -> ?devcb42.
+
+**One thing the change broke and the screenshot caught.** Removing the dateline removed the only gap between the title and the first group, so "Breakfast" rendered hard against "Grill" and read as a third line of the heading. The dateline had been carrying that 18px. Moved onto `.bgm-screen h1`. Worth remembering as a shape: deleting an element also deletes whatever spacing it was silently providing, and here the two elements involved were both headings, which is exactly when it looks like a wrap rather than a bug. Re-shot after the fix and confirmed.
+
+**Same session — type scaled down one step.** Paul asked to shrink the listings to stop long names wrapping, naming "Famous Mt Paul Breaky Special" (the longest on the menu at 29 characters). `.bgm-name`/`.bgm-price` 15px -> 14px, `.bgm-desc` 13px -> 12.5px, `.bgm-pair-*` 14px -> 13px. `sw.js` v23 -> v24, buster ?devcb42 -> ?devcb43.
+
+**Measured, not guessed — and the diagnosis was not what the request assumed.** Installed the real Hanken Grotesk, Bebas Neue and Spline Sans Mono locally via `@fontsource/*` so the sandbox could measure the actual faces rather than the system fallback, then swept viewport width in 5px steps looking for the first wrap.
+
+| | first wrap, webfont | first wrap, system fallback |
+|---|---|---|
+| 15px | 340px viewport | 355px |
+| 14px | 320px | 335px |
+| 13.5px | 315px | 325px |
+| 13px | 305px | 315px |
+
+**At 390px — the target device — nothing wrapped at any size, including the original 15px.** What Paul was seeing is the preview rendering inside a panel narrower than a phone, not the app. The change is still worth making: 14px is clean down to 344px on both faces, which covers a 375px iPhone SE/mini with room, and only the 320px first-generation SE still breaks.
+
+**Why the fallback column matters and is not academic.** `sw.js` precaches same-origin only; the webfonts come from Google's CDN and are not cached. A cold first launch with no signal — a golf course — renders in the system stack, which is the wider of the two. Any type-fitting decision on this app has to hold in that column, not just the webfont one.
+
+Verified after the change at 390 / 375 / 360 / 344 / 320px against both faces.
+
+**Same session — prices matched to the names.** Paul: apply the same reduction to the prices. They had already dropped 15px -> 14px alongside the names, so the request was really about what he could still see: the prices reading larger than the item beside them.
+
+**It was a face mismatch, not a size mismatch.** Measured cap heights at 400px and scaled: Hanken Grotesk's capitals are 0.703em, Spline Sans Mono's lining digits are 0.750em. Set to the same nominal 14px the digits stand about 7% taller than the name they sit beside — visible, and exactly the complaint. Matching cap heights puts the mono at 13.1px. `.bgm-price` 14px -> 13px, `.bgm-pair-price` 13px -> 12px for the same reason one step down. `sw.js` v24 -> v25, buster ?devcb43 -> ?devcb44.
+
+The dollar sign still reads a shade tall: it measures 0.828em in this face, taller than the face's own digits. Correcting for the `$` would leave the numerals too small, so it stands. Noted in the CSS so the next person doesn't "fix" it.
+
+**This is the second optical-match note in the project** — the Onboarding credit names carry the same principle ("an OPTICAL match, not a ramp... re-measure before changing any name"). Same rule, different pair of faces. Wrap clearance re-verified afterwards and unchanged: clean to 344px on both faces, 320px still breaks the one long name.
+
+**Same session — both extras sections flattened to single rows.** Add Extras and Add Extras or Substitutions moved from the two-across grid to one row per item, name and price, matching Dips & Salad Dressings. Order follows the printed sheet read down the left column and then down the right, so the sheet's own grouping survives: in Substitutions that puts the four sides together and then the four add-ons/subs, which reads better than the print piece did. `sw.js` v25 -> v26, buster ?devcb44 -> ?devcb45.
+
+`pairs` is now used by exactly one section, Coolers & Ciders, and the block type is kept for it. Noted in the file's header comment so nobody deletes it as dead code.
+
+**The duplicate is now impossible to miss.** With Add Extras flattened, the two identical "Onions $2.25" rows sit one directly above the other. Still transcribed verbatim — it is on the clubhouse's sheet and it is Paul's call, not mine — but the layout change has made the open question visible instead of buried in a grid.
+
+Price validation re-run across all three block types: 110 priced lines, zero malformed. Wrap clearance unchanged.
+
+**Same session — duplicate Onions removed.** Paul's call: Add Extras now carries one Onions row at $2.25 rather than two. `sw.js` v26 -> v27, buster ?devcb45 -> ?devcb46. PROJECT.md's Open list drops from three verbatim oddities to two — "Warmed Liqueres" and "Triple Bogie" still stand as printed, awaiting his check.
+
+Ran a duplicate-name scan across every `items` block afterwards rather than only looking at the row he named. Nothing else repeats anywhere on the menu. 109 priced lines, all correctly formatted.
+
+**Same session — "Warmed Liqueres" corrected to "Warmed Liqueurs."** Paul's call. The original spelling is recorded in a comment beside the label so a future reader can see the page deliberately departs from the printed sheet there rather than assuming a typo crept in on our side. `sw.js` v27 -> v28, buster ?devcb46 -> ?devcb47.
+
+Forty Creek is a whisky rather than a liqueur and sits under that heading anyway — raised, and Paul chose to leave it. That is the club's grouping, not an error in the transcription.
+
+PROJECT.md's Open list is down to one verbatim oddity: "Triple Bogie", which the sheet spells that way while the app is "A Bit of Bogey".
+
+**Same session — "Triple Bogie" corrected to "Triple Bogey."** Paul's call, with the printed spelling recorded in a comment beside it. `sw.js` v28 -> v29, buster ?devcb47 -> ?devcb48. That closes the last of the three oddities flagged when the page was first built.
+
+**Paul then widened the brief: "the original menu is a bloody mess, may as well fix what we can."** Rather than act on that unilaterally, here is the candidate list, split by how much it is actually known. Nothing below has been changed.
+
+*Verified against a source this session:*
+- **"Nudes"** — the brand is **Nüdes** (with the umlaut), the BC vodka-soda line; LCBO lists the parent brand as "Nude". Worth confirming which of the two the club actually pours.
+- **"Heyall"** — the brand is **Hey Y'all**, a Canadian hard iced tea, carried by BC Liquor Stores under exactly that name. "Heyall" is a run-together of it.
+
+*Brand names I am confident about from general knowledge but did not verify this session — treat as likely, not established:*
+- "Bud Lite" -> **Bud Light**
+- "Coors Lite" -> **Coors Light**
+- "Millers Genuine Draft" -> **Miller Genuine Draft** (no possessive S)
+- "Sleemans Honey Brown" -> **Sleeman** (appears twice: in the Imports list and in Draft on Tap)
+- "Motts Caesar" -> **Mott's**
+- "Kahlua" -> **Kahlúa**
+- "Okanagan Springs" -> the brewery is **Okanagan Spring**, though the plural is in common local use
+
+*Ordinary spelling, not brands:*
+- "jalapenos" -> **jalapeños**
+
+*Deliberately not on this list:* "Breaky", "Lil' Grill", "Dano's", "Big Daddy Caesar", "Mop Benny", "Cariboo" (the BC region is spelled that way), "Borscht". These are the club's voice or are already correct.
+
+**The rule being applied here.** Correcting the club's own words is a judgment call that belongs to Paul, not to whoever is transcribing. He has now said yes to three; the rest wait for him. The reason for splitting the list by confidence is that "I am fairly sure Miller has no S" and "I looked it up and BC Liquor Stores spells it Hey Y'all" are not the same kind of claim, and a future session reading this file should not have to guess which was which.
+
+**Same session — brand-name pass applied.** Paul ruled on the candidate list: Heyall -> Hey Y'all, Bud Lite -> Bud Light, Coors Lite -> Coors Light, Millers -> Miller Genuine Draft, Sleemans -> Sleeman Honey Brown (both the Imports list and Draft on Tap), Motts -> Mott's, Kahlua -> Kahlúa, jalapenos -> jalapeños. `sw.js` v29 -> v30, buster ?devcb48 -> ?devcb49.
+
+**Left as printed, deliberately:** "Nudes" — Paul could not confirm it against the bar, and the two candidate spellings (Nüdes, or the parent brand Nude) are different products. Better to print the club's own word than to guess between two. This is the only item left on PROJECT.md's Open list for the menu. Also unchanged: "Okanagan Springs", where the brewery is singular but the plural is universal locally, and Forty Creek under the liqueurs heading.
+
+**Every departure from the printed sheet is now listed in one comment at the top of `js/bar-menu.js`.** Eleven changes across four rounds of review, and they were becoming impossible to reconstruct from the diff alone. Anyone holding the paper menu next to this page will find a difference; the comment is what tells them it was a decision rather than a slip.
+
+**Verified by string search over the rendered output, not by eye.** Checked that all ten old spellings are absent and all ten new ones present with the right counts — Sleeman appearing exactly twice was the one worth machine-checking, since the second instance is in a different block type from the first and is easy to miss visually.
+
+**Same session — Salsa restored, and an earlier decision reversed.** Paul supplied the 2022 clubhouse menu as a PDF. Its SIDES block reads:
+
+```
+Hollandaise 4oz  $4      Onions   $2.25
+Fried Mushroom   $3      Salsa    $2
+```
+
+Same block, same grid position. So the second "Onions $2.25" on the current sheet is sitting exactly where Salsa used to be — a copy error that displaced a real item, not a duplicated line. Removing it earlier tonight on that assumption dropped a product from the menu. Salsa is back. `sw.js` v30 -> v31, buster ?devcb49 -> ?devcb50.
+
+**The price is inferred and is flagged as such in three places** (the data file, PROJECT.md's Open list, and the cache comment). 2022 had Salsa at $2.00; every other row in that block rose $0.25 by the current sheet, so $2.25. That is arithmetic on a four-year-old document, not a price anyone has read off a till, and it should not reach a customer unchecked.
+
+**Worth recording as a pattern, not just an incident.** Both the removal and the restoration were reasonable on the evidence available at the time. What changed was not the reasoning but the source document — and the source only appeared because Paul went looking for it after an offhand remark about yam fries. The lesson is not "check harder"; it is that a transcription from a single sheet carries the sheet's errors invisibly, and the only thing that surfaces them is a second copy to compare against. If the club has other historical menus, they are worth having.
+
+**Also visible in the 2022 PDF, for the record:**
+- It spells the heading "Warmed Liquers" — a third spelling of the same word across two documents.
+- Triple Bogie was $15.95 then, $17.50 now.
+- The sides list appears twice in two different places at identical prices ("Side Fries / Yam Fries / Side Salad / Side Caesar", then "Side of fries / Side of Yam fries / Side Salad / Side Caesar"). Paul collapsed that to one block when he transcribed, correctly.
+- Yam fries: $5 side and $6.75 basket in 2022, tracking to the current $5.25 and $7.15. Two portions, not two prices for one item — which settles the question that started this.
+
+**Paul mentioned wanting to redesign the paper menu eventually.** Recorded here, not actioned and not scoped. Nothing about it is in PROJECT.md's Open list, because there is no test that would close it yet.
+
+**Same session — heading reverted to "Bar & Grill", and the cause was mine.** Paul asked earlier to fold "Mt. Paul" into the heading; he has now asked to take it out again, because the words were duplicating the Mt. Paul logo sitting directly above them in the topbar. `sw.js` v31 -> v32, buster ?devcb50 -> ?devcb51.
+
+**This was a preview defect, not a change of mind.** The standalone preview being sent for review rendered the topbar as the placeholder text "(logo)" rather than the real vector mark, because the preview lives outside the project folder and could not resolve the asset path. Paul was reviewing a page whose masthead did not exist. He asked for "Mt. Paul" in the heading precisely because the preview showed no Mt. Paul anywhere else — a correct decision about an incorrect picture.
+
+**Fixed at the source rather than apologised for.** The preview now inlines the actual logo as a base64 data URI, so it is self-contained and shows what the screen really shows. Any future review of this page is against the real masthead.
+
+**The general shape, worth carrying to other projects:** a review artefact that silently substitutes a placeholder for a real asset does not merely look wrong — it produces confidently wrong *decisions*, and they arrive as ordinary feedback with nothing marking them as suspect. A missing image that renders as a broken icon is safer than one that renders as plausible text. Two edits were spent going out and back; neither was Paul's error.

@@ -1937,3 +1937,202 @@ body:not(.dark-mode) .saved-screen .brand-logo {
 }
 .stat-table-headed th:last-child { text-align: right; }
 
+
+/* --- Bar & Grill menu (2026-08-17) ------------------------------------
+
+   A long, flat, continuous page in the same idiom as Analytics: groups sit
+   directly on the page background separated by a hairline rule, not in
+   boxed cards. The printed clubhouse menu's layout is kept — name left,
+   price right, italic description under — but its serif/script faces are
+   not: titles take --font-marquee and everything else --font-ui, so the
+   page reads as part of this app rather than a scan of the paper one.
+
+   The `bgm-` prefix is deliberate. `.menu-item`, `.menu-header` and
+   `.menu-label` are already taken by the slide-out flyout, and a menu page
+   inside an app with a menu overlay is exactly where a class collision
+   would hide.                                                            */
+
+.bgm-screen { padding-bottom: 32px; }
+
+/* The dateline that used to sit under the title carried the gap down to the
+   first group; with it gone (Paul, 2026-08-17) the h1 has to carry it, or
+   "Breakfast" reads as a second line of the heading. Same 18px the dateline
+   had. */
+.bgm-screen h1 { margin-bottom: 18px; }
+
+.bgm-group {
+  padding: 0 0 18px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.bgm-group:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.bgm-title {
+  font-family: var(--font-marquee);
+  font-weight: 400;
+  font-size: 30px;
+  line-height: 1.05;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--cta-start);
+  margin: 0 0 6px;
+}
+
+/* Groups that read as an attachment to the section above rather than a
+   section of their own — the two extras blocks. Same treatment as the
+   in-group sub-headings ("Lil' Grill"), but keeping .bgm-title's top margin,
+   since this sits first inside its group rather than partway down one. */
+.bgm-title.bgm-title-sm {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  line-height: 1.3;
+  margin: 0 0 8px;
+}
+
+.bgm-sub {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cta-start);
+  margin: 20px 0 8px;
+}
+
+/* Italic service notes: "Served til 11am", "Comes with crispy hash browns".
+   Same role as .report-sub on Analytics — secondary ink, no tracking. */
+.bgm-note {
+  font-size: 13px;
+  font-style: italic;
+  line-height: 1.4;
+  color: var(--ink-muted);
+  margin: 0 0 12px;
+}
+
+/* Name — leader — price. The leader is a flex spacer that also carries the
+   dotted rule, so the price stays hard right however long the name is and
+   the eye can travel across. Baseline alignment rather than centre: the
+   name and the price are different sizes and different families, and
+   centring them leaves the price sitting visibly low. */
+.bgm-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 12px;
+}
+/* 14px, not 15 (Paul, 2026-08-17). Measured rather than guessed: the longest
+   name on the menu is "Famous Mt Paul Breaky Special". With the webfont it
+   first wraps at a 340px viewport at 15px and 320px at 14px; on the system
+   fallback — which is what an offline first launch actually gets, since
+   sw.js only precaches same-origin and the webfonts are not — those numbers
+   are 355px and 335px. A 390px phone never wrapped at either size; the
+   narrow cases are older/smaller handsets and a split view. 14px buys about
+   20px of headroom for one step down in size. */
+.bgm-name {
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+.bgm-dots {
+  flex: 1;
+  border-bottom: 1px dotted var(--line);
+  transform: translateY(-3px);
+  min-width: 12px;
+}
+/* 13px against the name's 14px, and that is an OPTICAL match, not a step
+   down (Paul, 2026-08-17 — same principle already recorded for the credit
+   names on Onboarding). Measured: Hanken Grotesk's cap height is 0.703em,
+   Spline Sans Mono's lining digits are 0.750em. Set to the same nominal
+   size the digits therefore stand about 7% taller than the item name beside
+   them, which is what reads as "the prices are bigger". Matching cap heights
+   puts the mono at 13.1px, so 13.
+   The dollar sign still reads a shade tall — it measures 0.828em in this
+   face, taller than its own digits. That is the typeface, not the setting;
+   correcting for it would leave the digits too small. Re-measure before
+   changing either size. */
+.bgm-price {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.bgm-desc {
+  font-size: 12.5px;
+  font-style: italic;
+  line-height: 1.4;
+  color: var(--ink-muted);
+  margin: 2px 0 0;
+}
+
+/* The printed sheet's two-across extras blocks. Four columns rather than
+   two so both price columns align to each other, not just within their own
+   half — a 2-column grid of name+price pairs lets the right-hand prices
+   wander with the length of the left-hand names. */
+.bgm-pairs {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  column-gap: 10px;
+  row-gap: 8px;
+  margin-top: 10px;
+}
+.bgm-pair-name {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ink);
+}
+/* Same optical correction as .bgm-price, one step down: 12px mono against
+   the 13px pair name. */
+.bgm-pair-price {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--ink);
+}
+
+/* Draft: one name, two prices, under a Pints/Jugs header. The header's
+   empty first cell holds the name column open so the two labels sit over
+   their own price columns. */
+.bgm-draft-head,
+.bgm-draft-row {
+  display: grid;
+  grid-template-columns: 1fr 72px 72px;
+  column-gap: 8px;
+  align-items: baseline;
+}
+.bgm-draft-head {
+  margin-top: 10px;
+  margin-bottom: 2px;
+}
+.bgm-draft-head span {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: right;
+  color: var(--ink-muted);
+}
+.bgm-draft-row { margin-top: 10px; }
+.bgm-draft-row .bgm-price { text-align: right; }
+
+/* The run-on sauce lists, centred on the printed sheet. */
+.bgm-runon {
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--ink-muted);
+  margin: 8px 0 0;
+}

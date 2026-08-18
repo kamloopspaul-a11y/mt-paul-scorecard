@@ -11,6 +11,7 @@ import { buildSettingsRecord } from './settings-record.js';
 import { loadCourseData, getHolesForTee, getPar, getStrokeIndex } from './course-data.js';
 import { KEYS, readJSON, writeJSON, remove, appendToArray } from './storage.js';
 import { buildAnalytics, loadHandicapRatings, markWeekAnimated, withSeasonSettings, withGreenFeeChange, currentGreenFee, seasonYear, withOffSeasonRounds } from './stats.js';
+import { barMenuHTML } from './bar-menu.js';
 import {
   TOGGLE_ON_GRADIENT, TOGGLE_OFF_GRADIENT,
   TOGGLE_ON_SHADOW, TOGGLE_OFF_SHADOW,
@@ -360,7 +361,7 @@ function reconcileStaleRound() {
 // owned by the crash-recovery branches, and restoring them here could show a
 // review screen for a round that branch has already resolved. 'onboarding' is
 // excluded because the onboarded flag decides that, not history.
-const RESTORABLE_SCREENS = ['hole', 'reports', 'setup', 'startround'];
+const RESTORABLE_SCREENS = ['hole', 'reports', 'setup', 'startround', 'barmenu'];
 
 function rememberScreen(screen) {
   if (!RESTORABLE_SCREENS.includes(screen)) return;
@@ -887,6 +888,7 @@ function render() {
     case 'finalscore': html = renderFinalScore(); break;
     case 'front9score': html = renderFront9Score(); break;
     case 'reports': html = renderReports(); break;
+    case 'barmenu': html = renderBarMenu(); break;
     case 'saved': html = renderSaved(); break;
     default: html = '<div class="screen"><p>Loading…</p></div>';
   }
@@ -972,6 +974,7 @@ function menuOverlayHTML() {
         <button class="menu-close" id="menu-close" aria-label="Close menu">&times;</button>
       </div>
       <button class="menu-item" id="menu-item-analytics">Analytics</button>
+      <button class="menu-item" id="menu-item-barmenu">Bar &amp; Grill Menu</button>
       <button class="menu-item" id="menu-item-play">Play Round</button>
       <button class="menu-item${phone ? '' : ' menu-item-last'}" id="menu-item-settings">Settings</button>
       ${phone
@@ -1883,6 +1886,27 @@ function renderFront9Score() {
 // fresh from `rounds-history` on every render — nothing is a stored running
 // total. See Design Handoff/README.md section 4/5 for the stat table and
 // empty-state rules this implements.
+
+// ===================== Screen: Bar & Grill Menu =====================
+//
+// A read-only reference page — the clubhouse's printed menu, transcribed.
+// Content and layout live in js/bar-menu.js; this function only supplies the
+// screen wrapper, topbar and the way out, the same division renderReports()
+// uses. Nothing here reads or writes round data, so it is safe to open and
+// leave at any point in a round.
+
+function renderBarMenu() {
+  return `
+    <div class="screen bgm-screen">
+      ${topbarHTML()}
+      <h1>Bar &amp; Grill</h1>
+      ${barMenuHTML()}
+      <div style="margin-top:24px;">
+        <button class="btn" id="btn-barmenu-home">Home</button>
+      </div>
+    </div>
+  `;
+}
 
 function renderReports() {
   const roundsHistory = readJSON(KEYS.ROUNDS_HISTORY, []);
@@ -2919,6 +2943,11 @@ function attachHandlers() {
       if (homeBtn) homeBtn.addEventListener('click', () => goToPlayRound());
       break;
     }
+    case 'barmenu': {
+      const homeBtn = document.getElementById('btn-barmenu-home');
+      if (homeBtn) homeBtn.addEventListener('click', () => goToPlayRound());
+      break;
+    }
   }
   attachMenuHandlers();
 }
@@ -2935,6 +2964,7 @@ function attachMenuHandlers() {
   const scrim = document.getElementById('menu-scrim');
   const closeBtn = document.getElementById('menu-close');
   const itemAnalytics = document.getElementById('menu-item-analytics');
+  const itemBarMenu = document.getElementById('menu-item-barmenu');
   const itemPlay = document.getElementById('menu-item-play');
   const itemSettings = document.getElementById('menu-item-settings');
 
@@ -2942,6 +2972,15 @@ function attachMenuHandlers() {
   if (scrim) scrim.addEventListener('click', closeMenu);
   if (closeBtn) closeBtn.addEventListener('click', closeMenu);
   if (itemAnalytics) itemAnalytics.addEventListener('click', () => { state.menuOpen = false; state.screen = 'reports'; render(); });
+  if (itemBarMenu) itemBarMenu.addEventListener('click', () => {
+    state.menuOpen = false;
+    state.screen = 'barmenu';
+    // Scroll to the top on arrival. The menu is a long page opened from a
+    // topbar that may itself be scrolled well down Analytics; without this
+    // you land in the middle of the beer list.
+    window.scrollTo(0, 0);
+    render();
+  });
   if (itemPlay) itemPlay.addEventListener('click', () => { state.menuOpen = false; state.screen = 'startround'; render(); });
   if (itemSettings) itemSettings.addEventListener('click', () => {
     state.menuOpen = false;
